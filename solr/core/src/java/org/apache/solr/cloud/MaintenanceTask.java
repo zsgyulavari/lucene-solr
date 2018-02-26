@@ -14,22 +14,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.solr.client.solrj.cloud.autoscaling;
+
+package org.apache.solr.cloud;
+
+import java.io.Closeable;
+import java.io.IOException;
 
 /**
  *
  */
-public class AlreadyExistsException extends Exception {
+public interface MaintenanceTask extends Runnable, Closeable {
 
-  private final String id;
-
-  public AlreadyExistsException(String id) {
-    super("Already exists: " + id);
-    this.id = id;
+  default String getName() {
+    return getClass().getSimpleName();
   }
 
-  public String getId() {
-    return id;
-  }
+  default void close() throws IOException {
 
+  }
 }

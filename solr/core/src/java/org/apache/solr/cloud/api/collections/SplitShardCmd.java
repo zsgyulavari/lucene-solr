@@ -18,6 +18,7 @@
 package org.apache.solr.cloud.api.collections;
 
 
+import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -26,12 +27,16 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.solr.client.solrj.cloud.DistributedQueue;
+import org.apache.solr.client.solrj.cloud.autoscaling.AlreadyExistsException;
 import org.apache.solr.client.solrj.cloud.autoscaling.PolicyHelper;
 import org.apache.solr.client.solrj.cloud.autoscaling.SolrCloudManager;
 import org.apache.solr.client.solrj.request.CoreAdminRequest;
+import org.apache.solr.cloud.MaintenanceTask;
+import org.apache.solr.cloud.MaintenanceThread;
 import org.apache.solr.cloud.Overseer;
 import org.apache.solr.cloud.overseer.OverseerAction;
 import org.apache.solr.common.SolrException;
@@ -69,8 +74,24 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
 
   private final OverseerCollectionMessageHandler ocmh;
 
+  public static final String CLEANUP_PERIOD_PROP = "split.shard.cleanup.period";
+  public static final String CLEANUP_TTL_PROP = "split.shard.cleanup.ttl";
+
+  public static final int DEFAULT_CLEANUP_PERIOD_SECONDS = 3600;
+  public static final int DEFAULT_CLEANUP_TTL_SECONDS = 3600 * 24 * 2;
+
   public SplitShardCmd(OverseerCollectionMessageHandler ocmh) {
     this.ocmh = ocmh;
+    int cleanupPeriod = ocmh.cloudManager.getClusterStateProvider().getClusterProperty(CLEANUP_PERIOD_PROP, DEFAULT_CLEANUP_PERIOD_SECONDS);
+    int cleanupTTL = ocmh.cloudManager.getClusterStateProvider().getClusterProperty(CLEANUP_TTL_PROP, DEFAULT_CLEANUP_TTL_SECONDS);
+    InactiveSliceCleanupTask task = new InactiveSliceCleanupTask(ocmh, cleanupTTL);
+    try {
+      ((MaintenanceThread) ocmh.overseer.getMaintenanceThread().getThread())
+          .addTask(task, cleanupPeriod, TimeUnit.SECONDS, false);
+    } catch (AlreadyExistsException e) { // should not happen
+      log.error("Already registered cleanup task? ", e);
+      throw new RuntimeException(e);
+    }
   }
 
   @Override
@@ -536,5 +557,56 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
       subShardNames.add(subShardName);
     }
     return rangesStr;
+  }
+
+  /**
+   * This maintenance task checks whether there are shards that have been inactive for a long
+   * time (which usually means they are left-overs from shard splitting) and removes them after
+   * their cleanupTTL period elapsed.
+   */
+  public static class InactiveSliceCleanupTask implements MaintenanceTask {
+    private OverseerCollectionMessageHandler ocmh;
+    private int cleanupTTL;
+    private DeleteShardCmd cmd;
+
+    public InactiveSliceCleanupTask(OverseerCollectionMessageHandler ocmh, int cleanupTTL) {
+      this.ocmh = ocmh;
+      this.cleanupTTL = cleanupTTL;
+      cmd = (DeleteShardCmd)ocmh.commandMap.get(DELETESHARD);
+    }
+
+    @Override
+    public synchronized void run() {
+      try {
+        ClusterState state = ocmh.cloudManager.getClusterStateProvider().getClusterState();
+        state.forEachCollection(coll -> {
+          coll.getSlices().forEach(s -> {
+            if (Slice.State.INACTIVE.equals(s.getState())) {
+              String tstampStr = s.getStr(ZkStateReader.STATE_TIMESTAMP_PROP);
+              if (tstampStr == null || tstampStr.isEmpty()) {
+                return;
+              }
+              long timestamp = Long.parseLong(tstampStr);
+              long delta = TimeUnit.NANOSECONDS.toSeconds(ocmh.cloudManager.getTimeSource().getTime() - timestamp);
+              if (delta > cleanupTTL) {
+                ZkNodeProps props = new ZkNodeProps(ZkStateReader.COLLECTION_PROP, coll.getName(),
+                    ZkStateReader.SHARD_ID_PROP, s.getName());
+                NamedList results = new NamedList();
+                try {
+                  cmd.call(state, props, results);
+                  if (results.get("failure") != null) {
+                    throw new Exception("Failed to delete inactive shard: " + results);
+                  }
+                } catch (Exception e) {
+                  log.warn("Exception deleting inactive shard " + coll.getName() + "/" + s.getName(), e);
+                }
+              }
+            }
+          });
+        });
+      } catch (IOException e) {
+        log.warn("Error running inactive shard cleanup task", e);
+      }
+    }
   }
 }
