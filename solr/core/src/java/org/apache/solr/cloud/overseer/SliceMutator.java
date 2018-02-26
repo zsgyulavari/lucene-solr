@@ -178,6 +178,7 @@ public class SliceMutator {
         props.remove("shard_parent_zk_session");
       }
       props.put(ZkStateReader.STATE_PROP, message.getStr(key));
+      props.put(ZkStateReader.STATE_TIMESTAMP_PROP, String.valueOf(dataProvider.getTimeSource().getTime()));
       Slice newSlice = new Slice(slice.getName(), slice.getReplicasCopy(), props);
       slicesCopy.put(slice.getName(), newSlice);
     }

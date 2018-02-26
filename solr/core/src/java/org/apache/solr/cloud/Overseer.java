@@ -484,6 +484,8 @@ public class Overseer implements SolrCloseable {
 
   private OverseerThread triggerThread;
 
+  private OverseerThread maintenanceThread;
+
   private final ZkStateReader reader;
 
   private final ShardHandler shardHandler;
@@ -527,6 +529,11 @@ public class Overseer implements SolrCloseable {
     updaterThread = new OverseerThread(tg, new ClusterStateUpdater(reader, id, stats), "OverseerStateUpdate-" + id);
     updaterThread.setDaemon(true);
 
+    // create this early so that collection commands may register their tasks
+    ThreadGroup maintenanceThreadGroup = new ThreadGroup("Overseer maintenance process");
+    MaintenanceThread maintenance = new MaintenanceThread(zkController.getSolrCloudManager());
+    maintenanceThread = new OverseerThread(maintenanceThreadGroup, maintenance, "OverseerMaintenanceThread-" + id);
+
     ThreadGroup ccTg = new ThreadGroup("Overseer collection creation process.");
 
     OverseerNodePrioritizer overseerPrioritizer = new OverseerNodePrioritizer(reader, adminPath, shardHandler.getShardHandlerFactory());
@@ -542,6 +549,7 @@ public class Overseer implements SolrCloseable {
     updaterThread.start();
     ccThread.start();
     triggerThread.start();
+    maintenanceThread.start();
     assert ObjectReleaseTracker.track(this);
   }
 
@@ -579,6 +587,16 @@ public class Overseer implements SolrCloseable {
   public synchronized OverseerThread getTriggerThread() {
     return triggerThread;
   }
+
+  /**
+   * For tests.
+   * @lucene.internal
+   * @return trigger thread
+   */
+  public synchronized OverseerThread getMaintenanceThread() {
+    return maintenanceThread;
+  }
+
   
   public synchronized void close() {
     if (closed) return;
@@ -608,6 +626,10 @@ public class Overseer implements SolrCloseable {
       IOUtils.closeQuietly(triggerThread);
       triggerThread.interrupt();
     }
+    if (maintenanceThread != null) {
+      IOUtils.closeQuietly(maintenanceThread);
+      maintenanceThread.interrupt();
+    }
     if (updaterThread != null) {
       try {
         updaterThread.join();
@@ -623,9 +645,15 @@ public class Overseer implements SolrCloseable {
         triggerThread.join();
       } catch (InterruptedException e)  {}
     }
+    if (maintenanceThread != null)  {
+      try {
+        maintenanceThread.join();
+      } catch (InterruptedException e)  {}
+    }
     updaterThread = null;
     ccThread = null;
     triggerThread = null;
+    maintenanceThread = null;
   }
 
   /**
