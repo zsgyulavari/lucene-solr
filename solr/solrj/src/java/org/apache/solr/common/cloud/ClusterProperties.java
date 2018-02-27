@@ -87,7 +87,7 @@ public class ClusterProperties {
   @SuppressWarnings("unchecked")
   public void setClusterProperty(String propertyName, String propertyValue) throws IOException {
 
-    if (!ZkStateReader.KNOWN_CLUSTER_PROPS.contains(propertyName)) {
+    if (!ZkStateReader.KNOWN_CLUSTER_PROPS.contains(propertyName) && !propertyName.startsWith(ZkStateReader.PROPERTY_PROP_PREFIX)) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Not a known cluster property " + propertyName);
     }
 

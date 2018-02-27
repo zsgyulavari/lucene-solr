@@ -486,6 +486,8 @@ public class Overseer implements SolrCloseable {
 
   private OverseerThread maintenanceThread;
 
+  private MaintenanceTasks maintenanceTasks;
+
   private final ZkStateReader reader;
 
   private final ShardHandler shardHandler;
@@ -531,8 +533,8 @@ public class Overseer implements SolrCloseable {
 
     // create this early so that collection commands may register their tasks
     ThreadGroup maintenanceThreadGroup = new ThreadGroup("Overseer maintenance process");
-    MaintenanceThread maintenance = new MaintenanceThread(zkController.getSolrCloudManager());
-    maintenanceThread = new OverseerThread(maintenanceThreadGroup, maintenance, "OverseerMaintenanceThread-" + id);
+    maintenanceTasks = new MaintenanceTasks(zkController.getSolrCloudManager());
+    maintenanceThread = new OverseerThread(maintenanceThreadGroup, maintenanceTasks, "OverseerMaintenanceTasks-" + id);
 
     ThreadGroup ccTg = new ThreadGroup("Overseer collection creation process.");
 
@@ -595,6 +597,13 @@ public class Overseer implements SolrCloseable {
    */
   public synchronized OverseerThread getMaintenanceThread() {
     return maintenanceThread;
+  }
+
+  /**
+   * Access the task runner to register / unregister maintenance tasks.
+   */
+  public synchronized MaintenanceTasks getMaintenanceTasks() {
+    return maintenanceTasks;
   }
 
   

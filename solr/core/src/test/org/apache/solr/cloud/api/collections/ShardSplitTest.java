@@ -49,6 +49,7 @@ import org.apache.solr.cloud.BasicDistributedZkTest;
 import org.apache.solr.cloud.ChaosMonkey;
 import org.apache.solr.cloud.StoppableIndexingThread;
 import org.apache.solr.common.SolrDocument;
+import org.apache.solr.common.cloud.ClusterProperties;
 import org.apache.solr.common.cloud.ClusterState;
 import org.apache.solr.common.cloud.CollectionStateWatcher;
 import org.apache.solr.common.cloud.CompositeIdRouter;
@@ -61,8 +62,10 @@ import org.apache.solr.common.cloud.ZkCoreNodeProps;
 import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
+import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.Utils;
 import org.apache.solr.util.TestInjection;
+import org.junit.After;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -87,6 +90,29 @@ public class ShardSplitTest extends BasicDistributedZkTest {
   public void distribSetUp() throws Exception {
     super.distribSetUp();
     useFactory(null);
+  }
+
+  @After
+  public void resetClusterProperties() throws Exception {
+    SplitShardCmd.InactiveSliceCleanupTask.testResultsList = null;
+    setClusterProperties(null, null);
+  }
+
+  private void setClusterProperties(String cleanupPeriod, String cleanupTTL) throws Exception {
+    ClusterProperties clusterProperties = new ClusterProperties(cloudClient.getZkStateReader().getZkClient());
+    Map<String, Object> props = clusterProperties.getClusterProperties();
+    boolean changed = false;
+    if (props.containsKey(SplitShardCmd.CLEANUP_PERIOD_PROP) ||
+        props.containsKey(SplitShardCmd.CLEANUP_TTL_PROP)) {
+      changed = true;
+    } else if (cleanupPeriod != null || cleanupTTL != null) {
+      changed = true;
+    }
+    clusterProperties.setClusterProperty(SplitShardCmd.CLEANUP_PERIOD_PROP, cleanupPeriod);
+    clusterProperties.setClusterProperty(SplitShardCmd.CLEANUP_TTL_PROP, cleanupTTL);
+    if (changed) {
+      Thread.sleep(5000);
+    }
   }
 
   @Test
@@ -508,6 +534,8 @@ public class ShardSplitTest extends BasicDistributedZkTest {
 
   @Test
   public void testSplitShardWithRule() throws Exception {
+    SplitShardCmd.InactiveSliceCleanupTask.testResultsList = new ArrayList<>();
+    setClusterProperties("2", "2");
     waitForThingsToLevelOut(15);
 
     if (usually()) {
@@ -527,6 +555,19 @@ public class ShardSplitTest extends BasicDistributedZkTest {
         .setShardName("shard1");
     response = splitShardRequest.process(cloudClient);
     assertEquals(String.valueOf(response.getErrorMessages()), 0, response.getStatus());
+
+    waitForThingsToLevelOut(15);
+
+    Thread.sleep(10000);
+    assertTrue(SplitShardCmd.InactiveSliceCleanupTask.testResultsList.size() > 0);
+    NamedList nl = SplitShardCmd.InactiveSliceCleanupTask.testResultsList.get(0);
+    assertEquals(collectionName, nl.get("collection"));
+    assertEquals("shard1", nl.get("slice"));
+    assertNull(nl.get("failure"));
+    assertNull(nl.get("error"));
+    assertNotNull(nl.get("success"));
+    // at this point there should be no inactive shards
+
   }
 
   private void incompleteOrOverlappingCustomRangeTest() throws Exception  {
@@ -574,6 +615,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
   }
 
   private void splitByUniqueKeyTest() throws Exception {
+
     ClusterState clusterState = cloudClient.getZkStateReader().getClusterState();
     final DocRouter router = clusterState.getCollection(AbstractDistribZkTestBase.DEFAULT_COLLECTION).getRouter();
     Slice shard1 = clusterState.getCollection(AbstractDistribZkTestBase.DEFAULT_COLLECTION).getSlice(SHARD1);
@@ -657,6 +699,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
 
     waitForRecoveriesToFinish(true);
     checkDocCountsAndShardStates(docCounts, numReplicas);
+
   }
 
 

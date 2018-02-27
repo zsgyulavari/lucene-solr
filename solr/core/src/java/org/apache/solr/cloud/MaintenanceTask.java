@@ -19,12 +19,28 @@ package org.apache.solr.cloud;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Map;
 
 /**
  *
  */
 public interface MaintenanceTask extends Runnable, Closeable {
 
+  /**
+   * Initialize this task. This method may be called multiple times when configuration changes.
+   * @param properties configuration properties (may contain unrelated key / values)
+   */
+  void init(Map<String, Object> properties);
+
+  /**
+   * Schedule period in seconds. The task will be executed at most that frequently.
+   */
+  int getSchedulePeriod();
+
+  /**
+   * Name of this task (must be unique). Default value is the simple class name.
+   * @return task name
+   */
   default String getName() {
     return getClass().getSimpleName();
   }

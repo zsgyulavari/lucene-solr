@@ -34,9 +34,9 @@ import org.apache.solr.client.solrj.cloud.DistributedQueue;
 import org.apache.solr.client.solrj.cloud.autoscaling.AlreadyExistsException;
 import org.apache.solr.client.solrj.cloud.autoscaling.PolicyHelper;
 import org.apache.solr.client.solrj.cloud.autoscaling.SolrCloudManager;
+import org.apache.solr.client.solrj.impl.ClusterStateProvider;
 import org.apache.solr.client.solrj.request.CoreAdminRequest;
 import org.apache.solr.cloud.MaintenanceTask;
-import org.apache.solr.cloud.MaintenanceThread;
 import org.apache.solr.cloud.Overseer;
 import org.apache.solr.cloud.overseer.OverseerAction;
 import org.apache.solr.common.SolrException;
@@ -74,20 +74,18 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
 
   private final OverseerCollectionMessageHandler ocmh;
 
-  public static final String CLEANUP_PERIOD_PROP = "split.shard.cleanup.period";
-  public static final String CLEANUP_TTL_PROP = "split.shard.cleanup.ttl";
+  private static final String PROP_PREFIX = ZkStateReader.PROPERTY_PROP_PREFIX + InactiveSliceCleanupTask.class.getSimpleName() + ".";
+  public static final String CLEANUP_PERIOD_PROP = PROP_PREFIX + "period";
+  public static final String CLEANUP_TTL_PROP = PROP_PREFIX + "ttl";
 
   public static final int DEFAULT_CLEANUP_PERIOD_SECONDS = 3600;
   public static final int DEFAULT_CLEANUP_TTL_SECONDS = 3600 * 24 * 2;
 
   public SplitShardCmd(OverseerCollectionMessageHandler ocmh) {
     this.ocmh = ocmh;
-    int cleanupPeriod = ocmh.cloudManager.getClusterStateProvider().getClusterProperty(CLEANUP_PERIOD_PROP, DEFAULT_CLEANUP_PERIOD_SECONDS);
-    int cleanupTTL = ocmh.cloudManager.getClusterStateProvider().getClusterProperty(CLEANUP_TTL_PROP, DEFAULT_CLEANUP_TTL_SECONDS);
-    InactiveSliceCleanupTask task = new InactiveSliceCleanupTask(ocmh, cleanupTTL);
+    InactiveSliceCleanupTask task = new InactiveSliceCleanupTask(ocmh);
     try {
-      ((MaintenanceThread) ocmh.overseer.getMaintenanceThread().getThread())
-          .addTask(task, cleanupPeriod, TimeUnit.SECONDS, false);
+      ocmh.overseer.getMaintenanceTasks().addTask(task, false);
     } catch (AlreadyExistsException e) { // should not happen
       log.error("Already registered cleanup task? ", e);
       throw new RuntimeException(e);
@@ -565,24 +563,62 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
    * their cleanupTTL period elapsed.
    */
   public static class InactiveSliceCleanupTask implements MaintenanceTask {
-    private OverseerCollectionMessageHandler ocmh;
-    private int cleanupTTL;
-    private DeleteShardCmd cmd;
 
-    public InactiveSliceCleanupTask(OverseerCollectionMessageHandler ocmh, int cleanupTTL) {
+    // a unit test shunt
+    static List<NamedList> testResultsList = null;
+
+    private OverseerCollectionMessageHandler ocmh;
+    private int cleanupTTL = DEFAULT_CLEANUP_TTL_SECONDS;
+    private int period = DEFAULT_CLEANUP_PERIOD_SECONDS;
+
+    public InactiveSliceCleanupTask(OverseerCollectionMessageHandler ocmh) {
       this.ocmh = ocmh;
-      this.cleanupTTL = cleanupTTL;
-      cmd = (DeleteShardCmd)ocmh.commandMap.get(DELETESHARD);
+    }
+
+    @Override
+    public void init(Map<String, Object> properties) {
+      String periodStr = String.valueOf(properties.getOrDefault(CLEANUP_PERIOD_PROP, DEFAULT_CLEANUP_PERIOD_SECONDS));
+      String ttlStr = String.valueOf(properties.getOrDefault(CLEANUP_TTL_PROP, DEFAULT_CLEANUP_TTL_SECONDS));
+      try {
+        period = Integer.parseInt(periodStr);
+      } catch (Exception e) {
+        period = -1;
+      }
+      if (period <= 0) {
+        log.warn("Invalid cleanup period " + periodStr + ", using default " + DEFAULT_CLEANUP_PERIOD_SECONDS);
+        period = DEFAULT_CLEANUP_PERIOD_SECONDS;
+      }
+      try {
+        cleanupTTL = Integer.parseInt(ttlStr);
+      } catch (Exception e) {
+        cleanupTTL = -1;
+      }
+      if (cleanupTTL < 0) {
+        log.warn("Invalid cleanup TTL " + ttlStr + ", using default " + DEFAULT_CLEANUP_TTL_SECONDS);
+        cleanupTTL = DEFAULT_CLEANUP_TTL_SECONDS;
+      }
+    }
+
+    @Override
+    public int getSchedulePeriod() {
+      return period;
     }
 
     @Override
     public synchronized void run() {
+      DeleteShardCmd cmd = (DeleteShardCmd)ocmh.commandMap.get(DELETESHARD);
+      log.debug("-- running, cmd={}", cmd);
+      if (cmd == null) {
+        return; // not initialized yet
+      }
       try {
         ClusterState state = ocmh.cloudManager.getClusterStateProvider().getClusterState();
         state.forEachCollection(coll -> {
           coll.getSlices().forEach(s -> {
             if (Slice.State.INACTIVE.equals(s.getState())) {
               String tstampStr = s.getStr(ZkStateReader.STATE_TIMESTAMP_PROP);
+              log.debug("-- found inactive {} / {}, now={}, tstamp={}",
+                  coll.getName(), s.getName(), ocmh.cloudManager.getTimeSource().getTime(), tstampStr);
               if (tstampStr == null || tstampStr.isEmpty()) {
                 return;
               }
@@ -592,13 +628,20 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
                 ZkNodeProps props = new ZkNodeProps(ZkStateReader.COLLECTION_PROP, coll.getName(),
                     ZkStateReader.SHARD_ID_PROP, s.getName());
                 NamedList results = new NamedList();
+                results.add("collection", coll.getName());
+                results.add("slice", s.getName());
                 try {
+                  log.debug("calling DELETESHARD with {}", props);
                   cmd.call(state, props, results);
                   if (results.get("failure") != null) {
                     throw new Exception("Failed to delete inactive shard: " + results);
                   }
                 } catch (Exception e) {
                   log.warn("Exception deleting inactive shard " + coll.getName() + "/" + s.getName(), e);
+                  results.add("error", e.toString());
+                }
+                if (testResultsList != null) {
+                  testResultsList.add(results);
                 }
               }
             }
