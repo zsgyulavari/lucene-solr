@@ -35,13 +35,14 @@ import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.util.IOUtils;
 import org.apache.solr.common.util.Utils;
 import org.apache.solr.util.DefaultSolrThreadFactory;
-import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Responsible for running periodically some maintenance tasks.
+ * Responsible for running periodically some maintenance tasks. Components can register maintenance tasks
+ * using {@link #addTask(MaintenanceTask, boolean)} method. Task defines the period (in seconds) for how
+ * often it should run.
  */
 public class MaintenanceTasks implements Runnable, SolrCloseable {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());

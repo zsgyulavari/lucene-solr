@@ -22,13 +22,13 @@ import java.io.IOException;
 import java.util.Map;
 
 /**
- *
+ * Represents a maintenance task to be run on Overseer leader.
  */
 public interface MaintenanceTask extends Runnable, Closeable {
 
   /**
    * Initialize this task. This method may be called multiple times when configuration changes.
-   * @param properties configuration properties (may contain unrelated key / values)
+   * @param properties cluster properties (may contain key / values unrelated to this implementation)
    */
   void init(Map<String, Object> properties);
 
@@ -45,6 +45,9 @@ public interface MaintenanceTask extends Runnable, Closeable {
     return getClass().getSimpleName();
   }
 
+  /**
+   * Task is closed when it's removed from the maintenance thread, or when Overseer leader is being closed.
+   */
   default void close() throws IOException {
 
   }
