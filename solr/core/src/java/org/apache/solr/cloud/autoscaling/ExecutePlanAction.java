@@ -67,12 +67,11 @@ public class ExecutePlanAction extends TriggerActionBase {
         log.debug("Executing operation: {}", operation.getParams());
         try {
           SolrResponse response = null;
-          int counter = 0;
           if (operation instanceof CollectionAdminRequest.AsyncCollectionAdminRequest) {
             CollectionAdminRequest.AsyncCollectionAdminRequest req = (CollectionAdminRequest.AsyncCollectionAdminRequest) operation;
             // waitForFinalState so that the end effects of operations are visible
             req.setWaitForFinalState(true);
-            String asyncId = event.getSource() + '/' + event.getId() + '/' + counter;
+            String asyncId = event.getSource() + '/' + event.getId();
             String znode = saveAsyncId(cloudManager.getDistribStateManager(), event, asyncId);
             log.trace("Saved requestId: {} in znode: {}", asyncId, znode);
             // TODO: find a better way of using async calls using dataProvider API !!!

@@ -183,4 +183,19 @@ public class AutoScaling {
       "    }";
 
   public static final Map<String, Object> AUTO_ADD_REPLICAS_TRIGGER_PROPS = (Map) Utils.fromJSONString(AUTO_ADD_REPLICAS_TRIGGER_DSL);
+
+  public static final String SCHEDULED_MAINTENANCE_TRIGGER_DSL =
+          "    {" +
+          "        'name' : '.scheduled_maintenance'," +
+          "        'event' : 'scheduled'," +
+          "        'enabled' : true," +
+          "        'actions' : [" +
+          "            {" +
+          "                'name':'inactive_slice_cleanup'," +
+          "                'class':'solr.InactiveSliceCleanupAction'" +
+          "            }" +
+          "        ]" +
+          "    }";
+
+  public static final Map<String, Object> SCHEDULED_MAINTENANCE_TRIGGER_PROPS = (Map) Utils.fromJSONString(SCHEDULED_MAINTENANCE_TRIGGER_DSL);
 }
