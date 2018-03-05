@@ -120,6 +120,11 @@ New Features
   (Lance Norskog, Grant Ingersoll, Joern Kottmann, Em, Kai Gülzau,
   Rene Nederhand, Robert Muir, Steven Bower, Steve Rowe)
 
+* LUCENE-8126: Add new spatial prefix tree (SPT) based on google S2 geometry.
+  It can only be used currently with Geo3D spatial context and it provides
+  improvements on indexing time for non-points shapes and on query performance.
+  (Ignacio Vera, David Smiley).
+
 Improvements
 
 * LUCENE-8081: Allow IndexWriter to opt out of flushing on indexing threads
@@ -157,6 +162,10 @@ Improvements
 * LUCENE-8033: FieldInfos now always use a dense encoding. (Mayya Sharipova
   via Adrien Grand)
 
+* LUCENE-8190: Specialized cell interface to allow any spatial prefix tree to
+  benefit from the setting setPruneLeafyBranches on RecursivePrefixTreeStrategy.
+  (Ignacio Vera)
+
 Bug Fixes
 
 * LUCENE-8077: Fixed bug in how CheckIndex verifies doc-value iterators.
@@ -183,6 +192,9 @@ Bug Fixes
 
 * LUCENE-8174: Fixed {Float,Double,Int,Long}Range.toString(). (Oliver Kaleske
   via Adrien Grand)
+
+* LUCENE-8182: Fixed BoostingQuery to apply the context boost instead of the parent query
+  boost (Jim Ferenczi)
 
 * LUCENE-8188: Fixed bugs in OpenNLPOpsFactory that were causing InputStreams fetched from the
   ResourceLoader to be leaked (hossman)
@@ -719,9 +731,6 @@ Other
 * LUCENE-7876: Avoid calls to LeafReader.fields() and MultiFields.getFields()
   that are trivially replaced by LeafReader.terms() and MultiFields.getTerms()
   (David Smiley)
-
-======================= Lucene 6.6.3 =======================
-(No Changes)
 
 ======================= Lucene 6.6.2 =======================
 

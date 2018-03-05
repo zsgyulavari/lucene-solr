@@ -78,6 +78,11 @@ Upgrade Notes
 * LUCENE-8161: If you are using the spatial JTS library with Solr, you must upgrade to 1.15.0.  This new version
   of JTS is now dual-licensed to include a BSD style license.
 
+* SOLR-12011: Replicas which are not up-to-date are not allowed to become leader. Use FORCELEADER API to
+  allow these replicas become leader.
+
+* SOLR-11957: The default Solr log file size and number of backups is raised to 32MB and 10 respectively
+
 New Features
 ----------------------
 * SOLR-11285: Simulation framework for autoscaling. (ab)
@@ -170,6 +175,15 @@ New Features
 
 * SOLR-12006: Add a '*_t' and '*_t_sort' dynamic field for single valued text fields (Varun Thacker)
 
+* SOLR-11597: Add contrib/ltr NeuralNetworkModel class. (Michael A. Alcorn, Yuki Yano, Christine Poerschke)
+
+* SOLR-11066: Implement a scheduled autoscaling trigger that runs on a fixed interval beginning with a
+  given start time. (David Smiley, Gus Heck, ab, shalin)
+
+* SOLR-11795: Add Solr metrics exporter for Prometheus (Minoru Osuka via koji)
+
+* SOLR-11267: Add support for "add-distinct" atomic update operation (Amrit Sarkar via noble )
+
 Bug Fixes
 ----------------------
 
@@ -224,6 +238,14 @@ Bug Fixes
 * SOLR-12021: Fixed a bug in ApiSpec and other JSON resource loading that was causing unclosed file handles (hossman)
 
 * SOLR-10720: Aggressive removal of a collection breaks cluster status API. (Alexey Serba, shalin)
+
+* SOLR-12050: UTILIZENODE does not enforce policy rules (hossman, noble)
+
+* SOLR-11843: Admin UI collection creation was not properly handling the router.field and router.name parameters.
+  Also changed the display label in the Admin UI from routerField to router.field to match the actual API.
+  (Shawn Heisey via Cassandra Targett)
+
+* SOLR-12011: Consistence problem when in-sync replicas are DOWN. (Cao Manh Dat)
 
 Optimizations
 ----------------------
@@ -300,7 +322,7 @@ Other Changes
 * SOLR-11848: Update Ref Guide to include info on grouping operations and using curl for large files. (Dariusz Wojtas
   via Cassandra Targett)
 
-* SOLR-11613: Make message for missing dataimport config in UI more explicit. (Shawn Heisey, Amrit Sarkar via 
+* SOLR-11613: Make message for missing dataimport config in UI more explicit. (Shawn Heisey, Amrit Sarkar via
   Cassandra Targett)
 
 * SOLR-11933: Make DIH UI page safer by not default checking the clean checkbox (Eric Pugh via Tomás Fernández Löbbe)
@@ -326,6 +348,11 @@ Other Changes
 * SOLR-10809: Get precommit lint warnings out of Solr core (Erick Erickson)
 
 * SOLR-12028: BadApple and AwaitsFix annotations usage (Erick Erickson, Uwe Schindler)
+
+* SOLR-12031: Refactor Policy framework to make simulated changes affect more than a single node (noble)
+
+* SOLR-11957: Increase MaxFileSize=32MB and MaxBackupIndex=10 for RollingFileAppender in log4j.properties
+  (Varun Thacker, shalin)
 
 ==================  7.2.1 ==================
 
@@ -1658,23 +1685,6 @@ Other Changes
   (Uwe Schindler)
 
 * SOLR-11324: Clean up mention of trie fields in documentation and source comments. (Steve Rowe)
-
-==================  6.6.3 ==================
-
-Consult the LUCENE_CHANGES.txt file for additional, low level, changes in this release.
-
-Versions of Major Components
----------------------
-Apache Tika 1.17
-Carrot2 3.15.0
-Velocity 1.7 and Velocity Tools 2.0
-Apache UIMA 2.3.1
-Apache ZooKeeper 3.4.11
-Jetty 9.4.8.v20171121
-
-
-(No Changes)
-
 
 ==================  6.6.2 ==================
 
