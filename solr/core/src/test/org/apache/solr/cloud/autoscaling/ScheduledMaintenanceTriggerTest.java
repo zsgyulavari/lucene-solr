@@ -45,7 +45,7 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
     configureCluster(1)
         .addConfig("conf", configset("cloud-minimal"))
         .configure();
-    if (random().nextBoolean() && false) {
+    if (random().nextBoolean()) {
       cloudManager = cluster.getJettySolrRunner(0).getCoreContainer().getZkController().getSolrCloudManager();
       solrClient = cluster.getSolrClient();
     } else {

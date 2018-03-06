@@ -163,7 +163,6 @@ public class ScheduledTrigger extends TriggerBase {
         TimeUnit.NANOSECONDS.toMillis(timeSource.getEpochTime()));
     AutoScaling.TriggerEventProcessor processor = processorRef.get();
 
-    log.debug("now={}, nextRunTime={}", now, nextRunTime);
     if (now.isBefore(nextRunTime)) {
       return; // it's not time yet
     }
