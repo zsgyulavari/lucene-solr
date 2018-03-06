@@ -17,6 +17,7 @@ import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.cloud.CloudTestUtils;
 import org.apache.solr.cloud.SolrCloudTestCase;
 import org.apache.solr.cloud.autoscaling.sim.SimCloudManager;
+import org.apache.solr.common.cloud.ClusterState;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.TimeSource;
 import org.apache.solr.util.LogLevel;
@@ -44,7 +45,7 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
     configureCluster(1)
         .addConfig("conf", configset("cloud-minimal"))
         .configure();
-    if (random().nextBoolean() || true) {
+    if (random().nextBoolean() && false) {
       cloudManager = cluster.getJettySolrRunner(0).getCoreContainer().getZkController().getSolrCloudManager();
       solrClient = cluster.getSolrClient();
     } else {
@@ -91,25 +92,32 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
     public synchronized void onEvent(TriggerEvent event, TriggerEventProcessorStage stage, String actionName,
                                      ActionContext context, Throwable error, String message) {
       List<CapturedEvent> lst = listenerEvents.computeIfAbsent(config.name, s -> new ArrayList<>());
-      lst.add(new CapturedEvent(timeSource.getTime(), context, config, stage, actionName, event, message));
+      CapturedEvent ev = new CapturedEvent(timeSource.getTime(), context, config, stage, actionName, event, message);
+      log.info("=======> " + ev);
+      lst.add(ev);
+    }
+  }
+
+  static CountDownLatch triggerFired = new CountDownLatch(1);
+
+  public static class TestTriggerAction extends TriggerActionBase {
+
+    @Override
+    public void process(TriggerEvent event, ActionContext context) throws Exception {
+      if (context.getProperties().containsKey("inactive_shard_cleanup")) {
+        triggerFired.countDown();
+      }
     }
   }
 
   @Test
   public void testInactiveShardCleanup() throws Exception {
     String collection1 = getClass().getSimpleName() + "_collection1";
-    String collection2 = getClass().getSimpleName() + "_collection2";
     CollectionAdminRequest.Create create1 = CollectionAdminRequest.createCollection(collection1,
-        "conf", 1, 1);
-    CollectionAdminRequest.Create create2 = CollectionAdminRequest.createCollection(collection2,
         "conf", 1, 1);
 
     create1.process(solrClient);
     CloudTestUtils.waitForState(cloudManager, "failed to create " + collection1, collection1,
-        CloudTestUtils.clusterShape(1, 1));
-
-    create2.process(solrClient);
-    CloudTestUtils.waitForState(cloudManager, "failed to create " + collection2, collection2,
         CloudTestUtils.clusterShape(1, 1));
 
     CollectionAdminRequest.SplitShard split1 = CollectionAdminRequest.splitShard(collection1)
@@ -117,16 +125,6 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
     split1.process(solrClient);
     CloudTestUtils.waitForState(cloudManager, "failed to split " + collection1, collection1,
         CloudTestUtils.clusterShape(3, 1));
-
-    cloudManager.getTimeSource().sleep(10000);
-
-    CollectionAdminRequest.SplitShard split2 = CollectionAdminRequest.splitShard(collection2)
-        .setShardName("shard1");
-    split2.process(solrClient);
-    CloudTestUtils.waitForState(cloudManager, "failed to split " + collection2, collection2,
-        CloudTestUtils.clusterShape(3, 1));
-
-    cloudManager.getTimeSource().sleep(5000);
 
     String setListenerCommand = "{" +
         "'set-listener' : " +
@@ -147,10 +145,11 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
         "'set-trigger' : {" +
         "'name' : '" + AutoScaling.SCHEDULED_MAINTENANCE_TRIGGER_NAME + "'," +
         "'event' : 'scheduled'," +
-        "'startTime' : 'NOW+5SECONDS'," +
+        "'startTime' : 'NOW+3SECONDS'," +
         "'every' : '+2SECONDS'," +
         "'enabled' : true," +
-        "'actions' : [{'name':'inactive_shard_cleanup', 'class' : 'solr.InactiveShardCleanupAction', 'ttl' : '10'}]" +
+        "'actions' : [{'name' : 'inactive_shard_cleanup', 'class' : 'solr.InactiveShardCleanupAction', 'ttl' : '10'}," +
+        "{'name' : 'test', 'class' : '" + TestTriggerAction.class.getName() + "'}]" +
         "}}";
     req = createAutoScalingRequest(SolrRequest.METHOD.POST, setTriggerCommand);
     response = solrClient.request(req);
@@ -158,57 +157,42 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
 
     boolean await = listenerCreated.await(10, TimeUnit.SECONDS);
     assertTrue("listener not created in time", await);
-    cloudManager.getTimeSource().sleep(10000);
+    await = triggerFired.await(20, TimeUnit.SECONDS);
+    assertTrue("cleanup action didn't run", await);
+
     // first cleanup should have occurred
     assertFalse("no events captured!", listenerEvents.isEmpty());
     List<CapturedEvent> events = new ArrayList<>(listenerEvents.get("foo"));
     listenerEvents.clear();
 
-    assertEquals(8, events.size());
-    CapturedEvent ev = events.get(2);
-    assertEquals(TriggerEventProcessorStage.AFTER_ACTION, ev.stage);
-    Map<String, Object> map = (Map<String, Object>)ev.context.get("properties.inactive_shard_cleanup");
+    assertFalse(events.isEmpty());
+    int inactiveEvents = 0;
+    CapturedEvent ce = null;
+    for (CapturedEvent e : events) {
+      if (e.stage != TriggerEventProcessorStage.AFTER_ACTION) {
+        continue;
+      }
+      if (e.context.containsKey("properties.inactive_shard_cleanup")) {
+        ce = e;
+        break;
+      } else {
+        inactiveEvents++;
+      }
+    }
+    assertTrue("should be at least one inactive event", inactiveEvents > 0);
+    assertNotNull("missing cleanup event", ce);
+    Map<String, Object> map = (Map<String, Object>)ce.context.get("properties.inactive_shard_cleanup");
     assertNotNull(map);
+
     Map<String, List<String>> inactive = (Map<String, List<String>>)map.get("inactive");
-    assertEquals(2, inactive.size());
+    assertEquals(1, inactive.size());
     assertNotNull(inactive.get(collection1));
-    assertNotNull(inactive.get(collection2));
     Map<String, List<String>> cleaned = (Map<String, List<String>>)map.get("cleaned");
     assertEquals(1, cleaned.size());
     assertNotNull(cleaned.get(collection1));
-    assertNull(cleaned.get(collection2));
 
-    ev = events.get(6);
-    assertEquals(TriggerEventProcessorStage.AFTER_ACTION, ev.stage);
-    map = (Map<String, Object>)ev.context.get("properties.inactive_shard_cleanup");
-    assertNotNull(map);
-    inactive = (Map<String, List<String>>)map.get("inactive");
-    assertEquals(1, inactive.size());
-    assertNull(inactive.get(collection1));
-    assertNotNull(inactive.get(collection2));
-    cleaned = (Map<String, List<String>>)map.get("cleaned");
-    assertEquals(0, cleaned.size());
+    ClusterState state = cloudManager.getClusterStateProvider().getClusterState();
 
-    cloudManager.getTimeSource().sleep(10000);
-    // the other cleanup should have occurred
-    assertFalse("no events captured!", listenerEvents.isEmpty());
-    events = new ArrayList<>(listenerEvents.get("foo"));
-    assertEquals(8, events.size());
-    ev = events.get(2);
-    assertEquals(TriggerEventProcessorStage.AFTER_ACTION, ev.stage);
-    map = (Map<String, Object>)ev.context.get("properties.inactive_shard_cleanup");
-    assertNotNull(map);
-    inactive = (Map<String, List<String>>)map.get("inactive");
-    assertEquals(1, inactive.size());
-    assertNull(inactive.get(collection1));
-    assertNotNull(inactive.get(collection2));
-    cleaned = (Map<String, List<String>>)map.get("cleaned");
-    assertEquals(1, cleaned.size());
-    assertNotNull(cleaned.get(collection2));
-    assertNull(cleaned.get(collection1));
-
-    ev = events.get(6);
-    map = (Map<String, Object>)ev.context.get("properties.inactive_shard_cleanup");
-    assertNull(map);
+    CloudTestUtils.clusterShape(2, 1).matches(state.getLiveNodes(), state.getCollection(collection1));
   }
 }

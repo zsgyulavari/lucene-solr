@@ -78,7 +78,9 @@ public class InactiveShardCleanupAction extends TriggerActionBase {
             return;
           }
           long timestamp = Long.parseLong(tstampStr);
-          long delta = TimeUnit.NANOSECONDS.toSeconds(cloudManager.getTimeSource().getTime() - timestamp);
+          long currentTime = cloudManager.getTimeSource().getTime();
+          long delta = TimeUnit.NANOSECONDS.toSeconds(currentTime - timestamp);
+          log.debug("{}/{}: tstamp={}, time={}, delta={}", coll.getName(), s.getName(), timestamp, currentTime, delta);
           if (delta > cleanupTTL) {
             log.debug("-- deleting inactive {} / {}", coll.getName(), s.getName());
             SolrRequest req = CollectionAdminRequest.deleteShard(coll.getName(), s.getName());
@@ -95,7 +97,7 @@ public class InactiveShardCleanupAction extends TriggerActionBase {
         }
       })
     );
-    if (!inactive.isEmpty()) {
+    if (!cleaned.isEmpty()) {
       Map<String, Object> results = new LinkedHashMap<>();
       results.put("inactive", inactive);
       results.put("cleaned", cleaned);

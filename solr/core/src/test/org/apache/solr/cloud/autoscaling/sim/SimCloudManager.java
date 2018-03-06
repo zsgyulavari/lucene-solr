@@ -609,6 +609,13 @@ public class SimCloudManager implements SolrCloudManager {
             throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, e);
           }
           break;
+        case DELETESHARD:
+          try {
+            clusterStateProvider.simDeleteShard(new ZkNodeProps(req.getParams().toNamedList().asMap(10)), results);
+          } catch (Exception e) {
+            throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, e);
+          }
+          break;
         default:
           throw new UnsupportedOperationException("Unsupported collection admin action=" + action + " in request: " + req.getParams());
       }
