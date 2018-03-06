@@ -184,6 +184,8 @@ New Features
 
 * SOLR-11267: Add support for "add-distinct" atomic update operation (Amrit Sarkar via noble )
 
+* SOLR-11960: Add collection level properties similar to cluster properties (Peter Rusko, Tomás Fernández Löbbe)
+
 Bug Fixes
 ----------------------
 
@@ -246,6 +248,9 @@ Bug Fixes
   (Shawn Heisey via Cassandra Targett)
 
 * SOLR-12011: Consistence problem when in-sync replicas are DOWN. (Cao Manh Dat)
+
+* SOLR-12020: JSON Facet API: terms facet on date field fails in refinement phase with
+  "Invalid Date String" error. (yonik)
 
 Optimizations
 ----------------------
@@ -353,6 +358,8 @@ Other Changes
 
 * SOLR-11957: Increase MaxFileSize=32MB and MaxBackupIndex=10 for RollingFileAppender in log4j.properties
   (Varun Thacker, shalin)
+
+* SOLR-12047: Increase checkStateInZk timeout (Cao Manh Dat, Varun Thacker)
 
 ==================  7.2.1 ==================
 
