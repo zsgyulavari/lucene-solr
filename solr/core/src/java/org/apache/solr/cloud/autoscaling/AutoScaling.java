@@ -167,7 +167,6 @@ public class AutoScaling {
   }
 
   public static final String AUTO_ADD_REPLICAS_TRIGGER_NAME = ".auto_add_replicas";
-  public static final String AUTO_ADD_REPLICAS_LISTENER_NAME = ".auto_add_replicas.system";
 
   public static final String AUTO_ADD_REPLICAS_TRIGGER_DSL =
       "    {" +
@@ -190,19 +189,22 @@ public class AutoScaling {
   public static final Map<String, Object> AUTO_ADD_REPLICAS_TRIGGER_PROPS = (Map) Utils.fromJSONString(AUTO_ADD_REPLICAS_TRIGGER_DSL);
 
   public static final String SCHEDULED_MAINTENANCE_TRIGGER_NAME = ".scheduled_maintenance";
-  public static final String SCHEDULED_MAINTENANCE_LISTENER_NAME = ".scheduled_maintenance.system";
 
   public static final String SCHEDULED_MAINTENANCE_TRIGGER_DSL =
           "    {" +
           "        'name' : '" + SCHEDULED_MAINTENANCE_TRIGGER_NAME + "'," +
           "        'event' : 'scheduled'," +
           "        'startTime' : 'NOW'," +
-          "        'every' : '+60SECONDS'," +
+          "        'every' : '+1DAY'," +
           "        'enabled' : true," +
           "        'actions' : [" +
           "            {" +
-          "                'name':'inactive_shard_cleanup'," +
-          "                'class':'solr.InactiveShardCleanupAction'" +
+          "                'name':'inactive_shard_plan'," +
+          "                'class':'solr.InactiveShardPlanAction'" +
+          "            }," +
+          "            {" +
+          "                'name':'execute_plan'," +
+          "                'class':'solr.ExecutePlanAction'" +
           "            }" +
           "        ]" +
           "    }";

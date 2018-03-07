@@ -24,7 +24,6 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.solr.client.solrj.SolrRequest;
-import org.apache.solr.client.solrj.SolrResponse;
 import org.apache.solr.client.solrj.cloud.autoscaling.SolrCloudManager;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.common.cloud.ClusterState;
@@ -38,7 +37,7 @@ import org.slf4j.LoggerFactory;
  * time (which usually means they are left-overs from shard splitting) and removes them after
  * their cleanupTTL period elapsed.
  */
-public class InactiveShardCleanupAction extends TriggerActionBase {
+public class InactiveShardPlanAction extends TriggerActionBase {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   public static final String TTL_PROP = "ttl";
@@ -67,7 +66,7 @@ public class InactiveShardCleanupAction extends TriggerActionBase {
   public void process(TriggerEvent event, ActionContext context) throws Exception {
     SolrCloudManager cloudManager = context.getCloudManager();
     ClusterState state = cloudManager.getClusterStateProvider().getClusterState();
-    Map<String, List<String>> cleaned = new LinkedHashMap<>();
+    Map<String, List<String>> cleanup = new LinkedHashMap<>();
     Map<String, List<String>> inactive = new LinkedHashMap<>();
     state.forEachCollection(coll ->
       coll.getSlices().forEach(s -> {
@@ -78,29 +77,23 @@ public class InactiveShardCleanupAction extends TriggerActionBase {
             return;
           }
           long timestamp = Long.parseLong(tstampStr);
-          long currentTime = cloudManager.getTimeSource().getTime();
+          // this timestamp uses epoch time
+          long currentTime = cloudManager.getTimeSource().getEpochTime();
           long delta = TimeUnit.NANOSECONDS.toSeconds(currentTime - timestamp);
           log.debug("{}/{}: tstamp={}, time={}, delta={}", coll.getName(), s.getName(), timestamp, currentTime, delta);
           if (delta > cleanupTTL) {
-            log.debug("-- deleting inactive {} / {}", coll.getName(), s.getName());
-            SolrRequest req = CollectionAdminRequest.deleteShard(coll.getName(), s.getName());
-            try {
-              SolrResponse rsp = cloudManager.request(req);
-              if (rsp.getResponse().get("failure") != null) {
-                throw new Exception("Failed to delete inactive shard: " + rsp);
-              }
-              cleaned.computeIfAbsent(coll.getName(), c -> new ArrayList<>()).add(s.getName());
-            } catch (Exception e) {
-              log.warn("Exception deleting inactive shard " + coll.getName() + "/" + s.getName(), e);
-            }
+            log.debug("-- delete inactive {} / {}", coll.getName(), s.getName());
+            List<SolrRequest> operations = (List<SolrRequest>)context.getProperties().computeIfAbsent("operations", k -> new ArrayList<>());
+            operations.add(CollectionAdminRequest.deleteShard(coll.getName(), s.getName()));
+            cleanup.computeIfAbsent(coll.getName(), c -> new ArrayList<>()).add(s.getName());
           }
         }
       })
     );
-    if (!cleaned.isEmpty()) {
+    if (!cleanup.isEmpty()) {
       Map<String, Object> results = new LinkedHashMap<>();
       results.put("inactive", inactive);
-      results.put("cleaned", cleaned);
+      results.put("cleanup", cleanup);
       context.getProperties().put(getName(), results);
     }
   }

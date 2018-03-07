@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.solr.cloud.autoscaling;
 
 import java.lang.invoke.MethodHandles;
@@ -21,6 +38,7 @@ import org.apache.solr.common.cloud.ClusterState;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.TimeSource;
 import org.apache.solr.util.LogLevel;
+import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -55,6 +73,22 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
     timeSource = cloudManager.getTimeSource();
   }
 
+  @After
+  public void restoreDefaults() throws Exception {
+    SolrRequest req = createAutoScalingRequest(SolrRequest.METHOD.POST,
+        "{'set-trigger' : " + AutoScaling.SCHEDULED_MAINTENANCE_TRIGGER_DSL + "}");
+    NamedList<Object> response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+    AutoScalingConfig autoScalingConfig = cloudManager.getDistribStateManager().getAutoScalingConfig();
+    if (autoScalingConfig.getTriggerListenerConfigs().containsKey("foo")) {
+      String cmd = "{" +
+          "'remove-listener' : {'name' : 'foo'}" +
+          "}";
+      response = solrClient.request(createAutoScalingRequest(SolrRequest.METHOD.POST, cmd));
+      assertEquals(response.get("result").toString(), "success");
+    }
+  }
+
   @AfterClass
   public static void teardown() throws Exception {
     if (cloudManager instanceof SimCloudManager) {
@@ -70,9 +104,10 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
     log.info(autoScalingConfig.toString());
     AutoScalingConfig.TriggerConfig triggerConfig = autoScalingConfig.getTriggerConfigs().get(AutoScaling.SCHEDULED_MAINTENANCE_TRIGGER_NAME);
     assertNotNull(triggerConfig);
-    assertEquals(1, triggerConfig.actions.size());
-    assertTrue(triggerConfig.actions.get(0).actionClass.endsWith(InactiveShardCleanupAction.class.getSimpleName()));
-    AutoScalingConfig.TriggerListenerConfig listenerConfig = autoScalingConfig.getTriggerListenerConfigs().get(AutoScaling.SCHEDULED_MAINTENANCE_LISTENER_NAME);
+    assertEquals(2, triggerConfig.actions.size());
+    assertTrue(triggerConfig.actions.get(0).actionClass.endsWith(InactiveShardPlanAction.class.getSimpleName()));
+    assertTrue(triggerConfig.actions.get(1).actionClass.endsWith(ExecutePlanAction.class.getSimpleName()));
+    AutoScalingConfig.TriggerListenerConfig listenerConfig = autoScalingConfig.getTriggerListenerConfigs().get(AutoScaling.SCHEDULED_MAINTENANCE_TRIGGER_NAME + ".system");
     assertNotNull(listenerConfig);
     assertEquals(AutoScaling.SCHEDULED_MAINTENANCE_TRIGGER_NAME, listenerConfig.trigger);
     assertTrue(listenerConfig.listenerClass.endsWith(SystemLogListener.class.getSimpleName()));
@@ -104,7 +139,7 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
 
     @Override
     public void process(TriggerEvent event, ActionContext context) throws Exception {
-      if (context.getProperties().containsKey("inactive_shard_cleanup")) {
+      if (context.getProperties().containsKey("inactive_shard_plan")) {
         triggerFired.countDown();
       }
     }
@@ -132,8 +167,8 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
         "'name' : 'foo'," +
         "'trigger' : '" + AutoScaling.SCHEDULED_MAINTENANCE_TRIGGER_NAME + "'," +
         "'stage' : ['STARTED','ABORTED','SUCCEEDED','FAILED']," +
-        "'beforeAction' : 'inactive_shard_cleanup'," +
-        "'afterAction' : 'inactive_shard_cleanup'," +
+        "'beforeAction' : 'inactive_shard_plan'," +
+        "'afterAction' : 'inactive_shard_plan'," +
         "'class' : '" + CapturingTriggerListener.class.getName() + "'" +
         "}" +
         "}";
@@ -148,7 +183,8 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
         "'startTime' : 'NOW+3SECONDS'," +
         "'every' : '+2SECONDS'," +
         "'enabled' : true," +
-        "'actions' : [{'name' : 'inactive_shard_cleanup', 'class' : 'solr.InactiveShardCleanupAction', 'ttl' : '10'}," +
+        "'actions' : [{'name' : 'inactive_shard_plan', 'class' : 'solr.InactiveShardPlanAction', 'ttl' : '10'}," +
+        "{'name' : 'execute_plan', 'class' : '" + ExecutePlanAction.class.getName() + "'}," +
         "{'name' : 'test', 'class' : '" + TestTriggerAction.class.getName() + "'}]" +
         "}}";
     req = createAutoScalingRequest(SolrRequest.METHOD.POST, setTriggerCommand);
@@ -157,10 +193,10 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
 
     boolean await = listenerCreated.await(10, TimeUnit.SECONDS);
     assertTrue("listener not created in time", await);
-    await = triggerFired.await(20, TimeUnit.SECONDS);
+    await = triggerFired.await(60, TimeUnit.SECONDS);
     assertTrue("cleanup action didn't run", await);
 
-    // first cleanup should have occurred
+    // cleanup should have occurred
     assertFalse("no events captured!", listenerEvents.isEmpty());
     List<CapturedEvent> events = new ArrayList<>(listenerEvents.get("foo"));
     listenerEvents.clear();
@@ -172,7 +208,7 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
       if (e.stage != TriggerEventProcessorStage.AFTER_ACTION) {
         continue;
       }
-      if (e.context.containsKey("properties.inactive_shard_cleanup")) {
+      if (e.context.containsKey("properties.inactive_shard_plan")) {
         ce = e;
         break;
       } else {
@@ -181,15 +217,15 @@ public class ScheduledMaintenanceTriggerTest extends SolrCloudTestCase {
     }
     assertTrue("should be at least one inactive event", inactiveEvents > 0);
     assertNotNull("missing cleanup event", ce);
-    Map<String, Object> map = (Map<String, Object>)ce.context.get("properties.inactive_shard_cleanup");
+    Map<String, Object> map = (Map<String, Object>)ce.context.get("properties.inactive_shard_plan");
     assertNotNull(map);
 
     Map<String, List<String>> inactive = (Map<String, List<String>>)map.get("inactive");
     assertEquals(1, inactive.size());
     assertNotNull(inactive.get(collection1));
-    Map<String, List<String>> cleaned = (Map<String, List<String>>)map.get("cleaned");
-    assertEquals(1, cleaned.size());
-    assertNotNull(cleaned.get(collection1));
+    Map<String, List<String>> cleanup = (Map<String, List<String>>)map.get("cleanup");
+    assertEquals(1, cleanup.size());
+    assertNotNull(cleanup.get(collection1));
 
     ClusterState state = cloudManager.getClusterStateProvider().getClusterState();
 

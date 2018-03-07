@@ -857,6 +857,9 @@ public class SimClusterStateProvider implements ClusterStateProvider {
    * @param results operation results.
    */
   public void simSplitShard(ZkNodeProps message, NamedList results) throws Exception {
+    if (message.getStr(CommonAdminParams.ASYNC) != null) {
+      results.add(CoreAdminParams.REQUESTID, message.getStr(CommonAdminParams.ASYNC));
+    }
     String collectionName = message.getStr(COLLECTION_PROP);
     AtomicReference<String> sliceName = new AtomicReference<>();
     sliceName.set(message.getStr(SHARD_ID_PROP));
@@ -901,7 +904,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
     Map<String, Object> props = sliceProperties.computeIfAbsent(collectionName, c -> new ConcurrentHashMap<>())
         .computeIfAbsent(sliceName.get(), s -> new ConcurrentHashMap<>());
     props.put(ZkStateReader.STATE_PROP, Slice.State.INACTIVE.toString());
-    props.put(ZkStateReader.STATE_TIMESTAMP_PROP, String.valueOf(cloudManager.getTimeSource().getTime()));
+    props.put(ZkStateReader.STATE_TIMESTAMP_PROP, String.valueOf(cloudManager.getTimeSource().getEpochTime()));
     // add slice props
     for (int i = 0; i < subRanges.size(); i++) {
       String subSlice = subSlices.get(i);
@@ -911,6 +914,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
       sliceProps.put(Slice.RANGE, range);
       sliceProps.put(Slice.PARENT, sliceName.get());
       sliceProps.put(ZkStateReader.STATE_PROP, Slice.State.ACTIVE.toString());
+      props.put(ZkStateReader.STATE_TIMESTAMP_PROP, String.valueOf(cloudManager.getTimeSource().getEpochTime()));
     }
     simRunLeaderElection(Collections.singleton(collectionName), true);
     results.add("success", "");
@@ -923,6 +927,9 @@ public class SimClusterStateProvider implements ClusterStateProvider {
    * @param results operation results
    */
   public void simDeleteShard(ZkNodeProps message, NamedList results) throws Exception {
+    if (message.getStr(CommonAdminParams.ASYNC) != null) {
+      results.add(CoreAdminParams.REQUESTID, message.getStr(CommonAdminParams.ASYNC));
+    }
     String collectionName = message.getStr(COLLECTION_PROP);
     String sliceName = message.getStr(SHARD_ID_PROP);
     ClusterState clusterState = getClusterState();
