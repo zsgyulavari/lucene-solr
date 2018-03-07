@@ -732,6 +732,13 @@ Other
   that are trivially replaced by LeafReader.terms() and MultiFields.getTerms()
   (David Smiley)
 
+======================= Lucene 6.6.3 =======================
+
+Build
+
+* LUCENE-6144: Upgrade Ivy to 2.4.0; 'ant ivy-bootstrap' now removes old Ivy
+  jars in ~/.ant/lib/.  (Shawn Heisey, Steve Rowe)
+
 ======================= Lucene 6.6.2 =======================
 
 Changes in Runtime Behavior
