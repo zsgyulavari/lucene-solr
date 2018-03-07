@@ -33,9 +33,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * This maintenance action checks whether there are shards that have been inactive for a long
- * time (which usually means they are left-overs from shard splitting) and removes them after
- * their cleanupTTL period elapsed.
+ * This class checks whether there are shards that have been inactive for a long
+ * time (which usually means they are left-overs from shard splitting) and requests their removal
+ * after their cleanup TTL period elapsed.
+ * <p>Shard delete requests are put into the {@link ActionContext}'s properties
+ * with the key name "operations". The value is a List of SolrRequest objects.</p>
  */
 public class InactiveShardPlanAction extends TriggerActionBase {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
