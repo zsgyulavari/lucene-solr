@@ -196,7 +196,7 @@ public class ScheduledTriggers implements Closeable {
    * @param newTrigger the trigger to be managed
    * @throws AlreadyClosedException if this class has already been closed
    */
-  public synchronized void add(AutoScaling.Trigger newTrigger) {
+  public synchronized void add(AutoScaling.Trigger newTrigger) throws Exception {
     if (isClosed) {
       throw new AlreadyClosedException("ScheduledTriggers has been closed and cannot be used anymore");
     }

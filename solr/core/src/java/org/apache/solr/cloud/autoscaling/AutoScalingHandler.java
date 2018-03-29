@@ -50,6 +50,7 @@ import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.AutoScalingParams;
 import org.apache.solr.common.params.CollectionAdminParams;
 import org.apache.solr.common.util.CommandOperation;
+import org.apache.solr.common.util.IOUtils;
 import org.apache.solr.common.util.StrUtils;
 import org.apache.solr.common.util.Utils;
 import org.apache.solr.core.SolrResourceLoader;
@@ -79,6 +80,7 @@ public class AutoScalingHandler extends RequestHandlerBase implements Permission
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   protected final SolrCloudManager cloudManager;
   protected final SolrResourceLoader loader;
+  protected final AutoScaling.TriggerFactory triggerFactory;
   private final List<Map<String, String>> DEFAULT_ACTIONS = new ArrayList<>(3);
   private static Set<String> singletonCommands = Stream.of("set-cluster-preferences", "set-cluster-policy")
       .collect(collectingAndThen(toSet(), Collections::unmodifiableSet));
@@ -88,6 +90,7 @@ public class AutoScalingHandler extends RequestHandlerBase implements Permission
   public AutoScalingHandler(SolrCloudManager cloudManager, SolrResourceLoader loader) {
     this.cloudManager = cloudManager;
     this.loader = loader;
+    this.triggerFactory = new AutoScaling.TriggerFactoryImpl(loader, cloudManager);
     this.timeSource = cloudManager.getTimeSource();
     Map<String, String> map = new HashMap<>(2);
     map.put(NAME, "compute_plan");
@@ -531,6 +534,21 @@ public class AutoScalingHandler extends RequestHandlerBase implements Permission
       }
     }
     AutoScalingConfig.TriggerConfig trigger = new AutoScalingConfig.TriggerConfig(triggerName, opCopy.getValuesExcluding("name"));
+    // validate trigger config
+    AutoScaling.Trigger t = null;
+    try {
+      t = triggerFactory.create(trigger.event, trigger.name, trigger.properties);
+    } catch (TriggerValidationException e) {
+      op.addError("Error validating trigger config " + trigger.name + ": " + e.getDetails());
+      return currentConfig;
+    } catch (Exception e) {
+      op.addError("Error validating trigger config " + trigger.name + ": " + e.toString());
+      return currentConfig;
+    } finally {
+      if (t != null) {
+        IOUtils.closeQuietly(t);
+      }
+    }
     currentConfig = currentConfig.withTriggerConfig(trigger);
     // check that there's a default SystemLogListener, unless user specified another one
     return withSystemLogListener(currentConfig, triggerName);

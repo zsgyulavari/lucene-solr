@@ -17,19 +17,35 @@
 package org.apache.solr.cloud.autoscaling;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+
+import org.apache.solr.client.solrj.cloud.SolrCloudManager;
+import org.apache.solr.core.SolrResourceLoader;
 
 /**
  * Base class for {@link TriggerAction} implementations.
  */
 public abstract class TriggerActionBase implements TriggerAction {
 
-  protected Map<String, String> initArgs;
+  protected Map<String, Object> properties = new HashMap<>();
+  protected SolrResourceLoader loader;
+  protected SolrCloudManager cloudManager;
+  protected final Set<String> validProperties = new HashSet<>();
+  protected final Set<String> requiredProperties = new HashSet<>();
+
+  protected TriggerActionBase() {
+    TriggerUtils.validProperties(validProperties, "name");
+    TriggerUtils.requiredProperties(requiredProperties, validProperties, "class");
+  }
 
   @Override
   public String getName() {
-    if (initArgs != null) {
-      return initArgs.get("name");
+    String name = (String) properties.get("name");
+    if (name != null) {
+      return name;
     } else {
       return getClass().getSimpleName();
     }
@@ -41,7 +57,22 @@ public abstract class TriggerActionBase implements TriggerAction {
   }
 
   @Override
-  public void init(Map<String, String> args) {
-    this.initArgs = args;
+  public void configure(SolrResourceLoader loader, SolrCloudManager cloudManager, Map<String, Object> properties) throws TriggerValidationException {
+    this.loader = loader;
+    this.cloudManager = cloudManager;
+    if (properties != null) {
+      this.properties.putAll(properties);
+    }
+    // validate the config
+    Map<String, String> results = new HashMap<>();
+    TriggerUtils.checkProperties(this.properties, results, requiredProperties, validProperties);
+    if (!results.isEmpty()) {
+      throw new TriggerValidationException(results);
+    }
+  }
+
+  @Override
+  public void init() throws Exception {
+
   }
 }

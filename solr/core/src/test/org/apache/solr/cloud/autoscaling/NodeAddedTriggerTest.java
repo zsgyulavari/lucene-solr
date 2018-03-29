@@ -27,10 +27,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.apache.solr.client.solrj.cloud.SolrCloudManager;
 import org.apache.solr.client.solrj.embedded.JettySolrRunner;
 import org.apache.solr.cloud.SolrCloudTestCase;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.common.util.TimeSource;
+import org.apache.solr.core.SolrResourceLoader;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -72,8 +74,8 @@ public class NodeAddedTriggerTest extends SolrCloudTestCase {
     long waitForSeconds = 1 + random().nextInt(5);
     Map<String, Object> props = createTriggerProps(waitForSeconds);
 
-    try (NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger", props, container.getResourceLoader(),
-        container.getZkController().getSolrCloudManager())) {
+    try (NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger")) {
+      trigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
       trigger.setProcessor(noFirstRunProcessor);
       trigger.run();
 
@@ -113,8 +115,8 @@ public class NodeAddedTriggerTest extends SolrCloudTestCase {
 
     // add a new node but remove it before the waitFor period expires
     // and assert that the trigger doesn't fire at all
-    try (NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger", props, container.getResourceLoader(),
-        container.getZkController().getSolrCloudManager())) {
+    try (NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger")) {
+      trigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
       final long waitTime = 2;
       props.put("waitFor", waitTime);
       trigger.setProcessor(noFirstRunProcessor);
@@ -159,8 +161,8 @@ public class NodeAddedTriggerTest extends SolrCloudTestCase {
     action.put("name", "testActionInit");
     action.put("class", NodeAddedTriggerTest.AssertInitTriggerAction.class.getName());
     actions.add(action);
-    try (NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger", props, container.getResourceLoader(),
-        container.getZkController().getSolrCloudManager())) {
+    try (NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger")) {
+      trigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
       assertEquals(true, actionConstructorCalled.get());
       assertEquals(false, actionInitCalled.get());
       assertEquals(false, actionCloseCalled.get());
@@ -177,6 +179,16 @@ public class NodeAddedTriggerTest extends SolrCloudTestCase {
     }
 
     @Override
+    public void configure(SolrResourceLoader loader, SolrCloudManager cloudManager, Map<String, Object> properties) throws TriggerValidationException {
+
+    }
+
+    @Override
+    public void init() {
+      actionInitCalled.compareAndSet(false, true);
+    }
+
+    @Override
     public String getName() {
       return "";
     }
@@ -190,19 +202,14 @@ public class NodeAddedTriggerTest extends SolrCloudTestCase {
     public void close() throws IOException {
       actionCloseCalled.compareAndSet(false, true);
     }
-
-    @Override
-    public void init(Map<String, String> args) {
-      actionInitCalled.compareAndSet(false, true);
-    }
   }
 
   @Test
   public void testListenerAcceptance() throws Exception {
     CoreContainer container = cluster.getJettySolrRunners().get(0).getCoreContainer();
     Map<String, Object> props = createTriggerProps(0);
-    try (NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger", props, container.getResourceLoader(),
-        container.getZkController().getSolrCloudManager())) {
+    try (NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger")) {
+      trigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
       trigger.setProcessor(noFirstRunProcessor);
       trigger.run(); // starts tracking live nodes
 
@@ -238,8 +245,8 @@ public class NodeAddedTriggerTest extends SolrCloudTestCase {
 
     // add a new node but update the trigger before the waitFor period expires
     // and assert that the new trigger still fires
-    NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger", props, container.getResourceLoader(),
-        container.getZkController().getSolrCloudManager());
+    NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger");
+    trigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
     trigger.setProcessor(noFirstRunProcessor);
     trigger.run();
 
@@ -247,8 +254,8 @@ public class NodeAddedTriggerTest extends SolrCloudTestCase {
     trigger.run(); // this run should detect the new node
     trigger.close(); // close the old trigger
 
-    try (NodeAddedTrigger newTrigger = new NodeAddedTrigger("some_different_name", props, container.getResourceLoader(),
-        container.getZkController().getSolrCloudManager()))  {
+    try (NodeAddedTrigger newTrigger = new NodeAddedTrigger("some_different_name"))  {
+      newTrigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
       try {
         newTrigger.restoreState(trigger);
         fail("Trigger should only be able to restore state from an old trigger of the same name");
@@ -257,8 +264,8 @@ public class NodeAddedTriggerTest extends SolrCloudTestCase {
       }
     }
 
-    try (NodeAddedTrigger newTrigger = new NodeAddedTrigger("node_added_trigger", props, container.getResourceLoader(),
-        container.getZkController().getSolrCloudManager()))  {
+    try (NodeAddedTrigger newTrigger = new NodeAddedTrigger("node_added_trigger"))  {
+      newTrigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
       AtomicBoolean fired = new AtomicBoolean(false);
       AtomicReference<TriggerEvent> eventRef = new AtomicReference<>();
       newTrigger.setProcessor(event -> {

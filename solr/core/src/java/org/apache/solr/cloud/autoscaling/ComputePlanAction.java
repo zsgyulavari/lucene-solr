@@ -40,6 +40,7 @@ import org.apache.solr.common.params.AutoScalingParams;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.params.CoreAdminParams;
 import org.apache.solr.common.util.StrUtils;
+import org.apache.solr.core.SolrResourceLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -55,10 +56,11 @@ public class ComputePlanAction extends TriggerActionBase {
 
   Set<String> collections = new HashSet<>();
 
+
   @Override
-  public void init(Map<String, String> args) {
-    super.init(args);
-    String colString = args.get("collections");
+  public void configure(SolrResourceLoader loader, SolrCloudManager cloudManager, Map<String, Object> properties) throws TriggerValidationException {
+    super.configure(loader, cloudManager, properties);
+    String colString = (String) properties.get("collections");
     if (colString != null && !colString.isEmpty()) {
       collections.addAll(StrUtils.splitSmart(colString, ','));
     }
