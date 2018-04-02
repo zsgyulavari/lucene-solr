@@ -214,10 +214,10 @@ public class TriggerCooldownIntegrationTest extends SolrCloudTestCase {
     }
 
     @Override
-    public void init(Map<String, String> args) {
+    public void init() throws Exception {
       log.info("TestTriggerAction init");
       actionInitCalled.countDown();
-      super.init(args);
+      super.init();
     }
   }
 
