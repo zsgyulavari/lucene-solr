@@ -55,7 +55,7 @@ public class NodeLostTrigger extends TriggerBase {
   public void init() throws Exception {
     super.init();
     lastLiveNodes = new HashSet<>(cloudManager.getClusterStateProvider().getLiveNodes());
-    log.debug("Initial livenodes: {}", lastLiveNodes);
+    log.debug("NodeLostTrigger {} - Initial livenodes: {}", name, lastLiveNodes);
     // pick up lost nodes for which marker paths were created
     try {
       List<String> lost = stateManager.listData(ZkStateReader.SOLR_AUTOSCALING_NODE_LOST_PATH);

@@ -56,7 +56,7 @@ public class NodeAddedTrigger extends TriggerBase {
   public void init() throws Exception {
     super.init();
     lastLiveNodes = new HashSet<>(cloudManager.getClusterStateProvider().getLiveNodes());
-    log.debug("Initial livenodes: {}", lastLiveNodes);
+    log.debug("NodeAddedTrigger {} - Initial livenodes: {}", name, lastLiveNodes);
     log.debug("NodeAddedTrigger {} instantiated with properties: {}", name, properties);
     // pick up added nodes for which marker paths were created
     try {
