@@ -85,7 +85,7 @@ public class SearchRateTrigger extends TriggerBase {
     try {
       rate = Double.parseDouble(rateString);
     } catch (Exception e) {
-      throw new TriggerValidationException("rate", "Invalid 'rate' configuration value: '" + rateString + "': " + e.toString());
+      throw new TriggerValidationException(name, "rate", "Invalid 'rate' configuration value: '" + rateString + "': " + e.toString());
     }
   }
 

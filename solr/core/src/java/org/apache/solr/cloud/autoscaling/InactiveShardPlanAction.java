@@ -49,6 +49,11 @@ public class InactiveShardPlanAction extends TriggerActionBase {
 
   private int cleanupTTL;
 
+  public InactiveShardPlanAction() {
+    super();
+    TriggerUtils.validProperties(validProperties, TTL_PROP);
+  }
+
   @Override
   public void configure(SolrResourceLoader loader, SolrCloudManager cloudManager, Map<String, Object> properties) throws TriggerValidationException {
     super.configure(loader, cloudManager, properties);
@@ -56,12 +61,10 @@ public class InactiveShardPlanAction extends TriggerActionBase {
     try {
       cleanupTTL = Integer.parseInt(cleanupStr);
     } catch (Exception e) {
-      log.warn("Invalid " + TTL_PROP + " value: '" + cleanupStr + "', using default " + DEFAULT_TTL_SECONDS);
-      cleanupTTL = DEFAULT_TTL_SECONDS;
+      throw new TriggerValidationException(getName(), TTL_PROP, "invalid value '" + cleanupStr + "': " + e.toString());
     }
     if (cleanupTTL < 0) {
-      log.warn("Invalid " + TTL_PROP + " value: '" + cleanupStr + "', using default " + DEFAULT_TTL_SECONDS);
-      cleanupTTL = DEFAULT_TTL_SECONDS;
+      throw new TriggerValidationException(getName(), TTL_PROP, "invalid value '" + cleanupStr + "', should be > 0. ");
     }
   }
 

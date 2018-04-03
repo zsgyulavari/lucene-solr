@@ -46,7 +46,7 @@ public class NodeAddedTriggerTest extends SolrCloudTestCase {
   private static AtomicBoolean actionCloseCalled = new AtomicBoolean(false);
 
   private AutoScaling.TriggerEventProcessor noFirstRunProcessor = event -> {
-    fail("Did not expect the listener to fire on first run!");
+    fail("Did not expect the processor to fire on first run! event=" + event);
     return true;
   };
 
@@ -76,6 +76,7 @@ public class NodeAddedTriggerTest extends SolrCloudTestCase {
 
     try (NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger")) {
       trigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
+      trigger.init();
       trigger.setProcessor(noFirstRunProcessor);
       trigger.run();
 
@@ -117,6 +118,7 @@ public class NodeAddedTriggerTest extends SolrCloudTestCase {
     // and assert that the trigger doesn't fire at all
     try (NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger")) {
       trigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
+      trigger.init();
       final long waitTime = 2;
       props.put("waitFor", waitTime);
       trigger.setProcessor(noFirstRunProcessor);
@@ -210,6 +212,7 @@ public class NodeAddedTriggerTest extends SolrCloudTestCase {
     Map<String, Object> props = createTriggerProps(0);
     try (NodeAddedTrigger trigger = new NodeAddedTrigger("node_added_trigger")) {
       trigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
+      trigger.init();
       trigger.setProcessor(noFirstRunProcessor);
       trigger.run(); // starts tracking live nodes
 

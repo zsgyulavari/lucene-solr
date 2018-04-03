@@ -77,6 +77,7 @@ public class NodeLostTriggerTest extends SolrCloudTestCase {
 
     try (NodeLostTrigger trigger = new NodeLostTrigger("node_lost_trigger")) {
       trigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
+      trigger.init();
       trigger.setProcessor(noFirstRunProcessor);
       trigger.run();
       String lostNodeName1 = cluster.getJettySolrRunner(1).getNodeName();
@@ -124,6 +125,7 @@ public class NodeLostTriggerTest extends SolrCloudTestCase {
       trigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
       final long waitTime = 2;
       props.put("waitFor", waitTime);
+      trigger.init();
       trigger.setProcessor(noFirstRunProcessor);
       trigger.run();
 
@@ -227,6 +229,7 @@ public class NodeLostTriggerTest extends SolrCloudTestCase {
     Map<String, Object> props = createTriggerProps(0);
     try (NodeLostTrigger trigger = new NodeLostTrigger("node_added_trigger")) {
       trigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
+      trigger.init();
       trigger.setProcessor(noFirstRunProcessor);
 
       JettySolrRunner newNode = cluster.startJettySolrRunner();
@@ -282,6 +285,7 @@ public class NodeLostTriggerTest extends SolrCloudTestCase {
 
     NodeLostTrigger trigger = new NodeLostTrigger("node_lost_trigger");
     trigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
+    trigger.init();
     trigger.setProcessor(noFirstRunProcessor);
     trigger.run();
 
@@ -300,6 +304,7 @@ public class NodeLostTriggerTest extends SolrCloudTestCase {
 
     try (NodeLostTrigger newTrigger = new NodeLostTrigger("some_different_name"))  {
       newTrigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
+      newTrigger.init();
       try {
         newTrigger.restoreState(trigger);
         fail("Trigger should only be able to restore state from an old trigger of the same name");
@@ -310,6 +315,7 @@ public class NodeLostTriggerTest extends SolrCloudTestCase {
 
     try (NodeLostTrigger newTrigger = new NodeLostTrigger("node_lost_trigger")) {
       newTrigger.configure(container.getResourceLoader(), container.getZkController().getSolrCloudManager(), props);
+      newTrigger.init();
       AtomicBoolean fired = new AtomicBoolean(false);
       AtomicReference<TriggerEvent> eventRef = new AtomicReference<>();
       newTrigger.setProcessor(event -> {

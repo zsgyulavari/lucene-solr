@@ -33,12 +33,21 @@ public abstract class TriggerActionBase implements TriggerAction {
   protected Map<String, Object> properties = new HashMap<>();
   protected SolrResourceLoader loader;
   protected SolrCloudManager cloudManager;
+  /**
+   * Set of valid property names. Subclasses may add to this set
+   * using {@link TriggerUtils#validProperties(Set, String...)}
+   */
   protected final Set<String> validProperties = new HashSet<>();
+  /**
+   * Set of required property names. Subclasses may add to this set
+   * using {@link TriggerUtils#requiredProperties(Set, Set, String...)}
+   * (required properties are also valid properties).
+   */
   protected final Set<String> requiredProperties = new HashSet<>();
 
   protected TriggerActionBase() {
-    TriggerUtils.validProperties(validProperties, "name");
-    TriggerUtils.requiredProperties(requiredProperties, validProperties, "class");
+    // not strictly needed here because they are already checked during instantiation
+    TriggerUtils.validProperties(validProperties, "name", "class");
   }
 
   @Override
@@ -67,7 +76,7 @@ public abstract class TriggerActionBase implements TriggerAction {
     Map<String, String> results = new HashMap<>();
     TriggerUtils.checkProperties(this.properties, results, requiredProperties, validProperties);
     if (!results.isEmpty()) {
-      throw new TriggerValidationException(results);
+      throw new TriggerValidationException(getName(), results);
     }
   }
 

@@ -458,14 +458,26 @@ public class AutoScalingHandler extends RequestHandlerBase implements Permission
     }
     if (op.hasError()) return currentConfig;
 
+    AutoScalingConfig.TriggerListenerConfig listenerConfig = new AutoScalingConfig.TriggerListenerConfig(listenerName, op.getValuesExcluding("name"));
+
     // validate that we can load the listener class
     // todo allow creation from blobstore
+    TriggerListener listener = null;
     try {
-      loader.findClass(listenerClass, TriggerListener.class);
+      listener = loader.newInstance(listenerClass, TriggerListener.class);
+      listener.configure(loader, cloudManager, listenerConfig);
+    } catch (TriggerValidationException e) {
+      log.warn("invalid listener configuration", e);
+      op.addError("invalid listener configuration: " + e.toString());
+      return currentConfig;
     } catch (Exception e) {
       log.warn("error loading listener class ", e);
       op.addError("Listener not found: " + listenerClass + ". error message:" + e.getMessage());
       return currentConfig;
+    } finally {
+      if (listener != null) {
+        IOUtils.closeQuietly(listener);
+      }
     }
 
     Set<String> actionNames = new HashSet<>();
@@ -478,9 +490,8 @@ public class AutoScalingHandler extends RequestHandlerBase implements Permission
       op.addError("The trigger '" + triggerName + "' does not have actions named: " + actionNames);
       return currentConfig;
     }
-    AutoScalingConfig.TriggerListenerConfig listener = new AutoScalingConfig.TriggerListenerConfig(listenerName, op.getValuesExcluding("name"));
     // todo - handle races between competing set-trigger and set-listener invocations
-    currentConfig = currentConfig.withTriggerListenerConfig(listener);
+    currentConfig = currentConfig.withTriggerListenerConfig(listenerConfig);
     return currentConfig;
   }
 
@@ -538,9 +549,6 @@ public class AutoScalingHandler extends RequestHandlerBase implements Permission
     AutoScaling.Trigger t = null;
     try {
       t = triggerFactory.create(trigger.event, trigger.name, trigger.properties);
-    } catch (TriggerValidationException e) {
-      op.addError("Error validating trigger config " + trigger.name + ": " + e.getDetails());
-      return currentConfig;
     } catch (Exception e) {
       op.addError("Error validating trigger config " + trigger.name + ": " + e.toString());
       return currentConfig;

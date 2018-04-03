@@ -56,7 +56,16 @@ public abstract class TriggerBase implements AutoScaling.Trigger {
   protected SolrResourceLoader loader;
   protected DistribStateManager stateManager;
   protected final Map<String, Object> properties = new HashMap<>();
+  /**
+   * Set of valid property names. Subclasses may add to this set
+   * using {@link TriggerUtils#validProperties(Set, String...)}
+   */
   protected final Set<String> validProperties = new HashSet<>();
+  /**
+   * Set of required property names. Subclasses may add to this set
+   * using {@link TriggerUtils#requiredProperties(Set, Set, String...)}
+   * (required properties are also valid properties).
+   */
   protected final Set<String> requiredProperties = new HashSet<>();
   protected final TriggerEventType eventType;
   protected int waitForSecond;
@@ -72,7 +81,7 @@ public abstract class TriggerBase implements AutoScaling.Trigger {
     this.name = name;
 
     // subclasses may modify this set to include other supported properties
-    TriggerUtils.validProperties(validProperties, "name", "event", "enabled", "waitFor", "actions");
+    TriggerUtils.validProperties(validProperties, "name", "class", "event", "enabled", "waitFor", "actions");
   }
 
   @Override
@@ -106,7 +115,7 @@ public abstract class TriggerBase implements AutoScaling.Trigger {
     Map<String, String> results = new HashMap<>();
     TriggerUtils.checkProperties(this.properties, results, requiredProperties, validProperties);
     if (!results.isEmpty()) {
-      throw new TriggerValidationException(results);
+      throw new TriggerValidationException(name, results);
     }
   }
 

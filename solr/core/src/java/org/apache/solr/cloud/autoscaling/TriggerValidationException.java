@@ -23,15 +23,18 @@ import java.util.Map;
  * This class represents errors found when validating trigger configuration.
  */
 public class TriggerValidationException extends Exception {
-  private Map<String, String> details = new HashMap<>();
+  private final Map<String, String> details = new HashMap<>();
+  private final String name;
 
   /**
    * Create an exception.
+   * @param name name of the trigger / action / listener that caused the exception
    * @param details details of invalid configuration - key is a property name,
    *                value is an error message.
    */
-  public TriggerValidationException(Map<String, String> details) {
+  public TriggerValidationException(String name, Map<String, String> details) {
     super();
+    this.name = name;
     if (details != null) {
       this.details.putAll(details);
     }
@@ -39,11 +42,13 @@ public class TriggerValidationException extends Exception {
 
   /**
    * Create an exception.
+   * @param name name of the trigger / action / listener that caused the exception
    * @param keyValues zero or even number of arguments representing symbolic key
    *                  (eg. property name) and the corresponding validation error message.
    */
-  public TriggerValidationException(String... keyValues) {
+  public TriggerValidationException(String name, String... keyValues) {
     super();
+    this.name = name;
     if (keyValues == null || keyValues.length == 0) {
       return;
     }
@@ -62,7 +67,8 @@ public class TriggerValidationException extends Exception {
   @Override
   public String toString() {
     return "TriggerValidationException{" +
-        "details=" + details +
+        "name=" + name +
+        ", details='" + details + '\'' +
         '}';
   }
 }

@@ -56,6 +56,11 @@ public class ComputePlanAction extends TriggerActionBase {
 
   Set<String> collections = new HashSet<>();
 
+  public ComputePlanAction() {
+    super();
+    TriggerUtils.validProperties(validProperties, "collections");
+  }
+
 
   @Override
   public void configure(SolrResourceLoader loader, SolrCloudManager cloudManager, Map<String, Object> properties) throws TriggerValidationException {

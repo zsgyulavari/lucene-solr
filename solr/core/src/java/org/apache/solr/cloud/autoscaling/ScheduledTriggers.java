@@ -685,7 +685,8 @@ public class ScheduledTriggers implements Closeable {
             }
             if (listener != null) {
               try {
-                listener.init(cloudManager, config);
+                listener.configure(loader, cloudManager, config);
+                listener.init();
                 listenersPerName.put(config.name, listener);
               } catch (Exception e) {
                 log.warn("Error initializing TriggerListener " + config, e);
@@ -769,6 +770,9 @@ public class ScheduledTriggers implements Closeable {
       updateLock.lock();
       try {
         for (TriggerListener listener : getTriggerListeners(trigger, stage)) {
+          if (!listener.isEnabled()) {
+            continue;
+          }
           if (actionName != null) {
             AutoScalingConfig.TriggerListenerConfig config = listener.getConfig();
             if (stage == TriggerEventProcessorStage.BEFORE_ACTION) {
