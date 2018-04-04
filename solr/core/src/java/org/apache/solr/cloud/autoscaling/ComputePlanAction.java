@@ -203,6 +203,7 @@ public class ComputePlanAction extends TriggerActionBase {
         break;
       case SEARCHRATE:
       case METRIC:
+      case INDEXSIZE:
         List<TriggerEvent.Op> ops = (List<TriggerEvent.Op>)event.getProperty(TriggerEvent.REQUESTED_OPS, Collections.emptyList());
         int start = (Integer)event.getProperty(START, 0);
         if (ops.isEmpty() || start >= ops.size()) {
