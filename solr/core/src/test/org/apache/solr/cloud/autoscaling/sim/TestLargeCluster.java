@@ -540,7 +540,7 @@ public class TestLargeCluster extends SimSolrCloudTestCase {
 
     String metricName = "QUERY./select.requestTimes:1minRate";
     // simulate search traffic
-    cluster.getSimClusterStateProvider().simSetShardValue(collectionName, "shard1", metricName, 40, true);
+    cluster.getSimClusterStateProvider().simSetShardValue(collectionName, "shard1", metricName, 40, false, true);
 
     // now define the trigger. doing it earlier may cause partial events to be generated (where only some
     // nodes / replicas exceeded the threshold).

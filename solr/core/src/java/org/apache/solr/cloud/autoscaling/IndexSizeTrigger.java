@@ -100,13 +100,15 @@ public class IndexSizeTrigger extends TriggerBase {
       throw new TriggerValidationException(getName(), ABOVE_PROP, "invalid value '" + aboveStr + "': " + e.toString());
     }
     try {
-      below = Long.parseLong(aboveStr);
+      below = Long.parseLong(belowStr);
       if (below < 0) {
         below = -1;
       }
     } catch (Exception e) {
       throw new TriggerValidationException(getName(), BELOW_PROP, "invalid value '" + belowStr + "': " + e.toString());
     }
+    // below must be at least 2x smaller than above, otherwise splitting a shard
+    // would immediately put the shard below the threshold and cause the mergeshards action
     if (below > 0 && (below * 2 > above)) {
       throw new TriggerValidationException(getName(), BELOW_PROP,
           "invalid value " + below + ", should be less than half of '" + ABOVE_PROP + "' value, which is " + above);
@@ -198,8 +200,7 @@ public class IndexSizeTrigger extends TriggerBase {
               }
             }
             if (info == null) {
-              // should not happen
-              log.warn("could not find replica info for replica " + r);
+              // probably replica is not on this node
               return;
             }
             // we have to translate to the metrics registry name, which uses "_replica_nN" as suffix
@@ -214,7 +215,7 @@ public class IndexSizeTrigger extends TriggerBase {
                 tag = "metrics:" + registry + ":INDEX.size";
                 break;
               case docs:
-                tag = "metrics:" + registry + "SEARCHER.searcher.numDocs";
+                tag = "metrics:" + registry + ":SEARCHER.searcher.numDocs";
                 break;
               default:
                 throw new UnsupportedOperationException("Unit " + unit + " not supported");

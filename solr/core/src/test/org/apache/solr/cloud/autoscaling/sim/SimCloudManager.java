@@ -43,7 +43,9 @@ import org.apache.solr.client.solrj.cloud.DistribStateManager;
 import org.apache.solr.client.solrj.cloud.NodeStateProvider;
 import org.apache.solr.client.solrj.cloud.SolrCloudManager;
 import org.apache.solr.client.solrj.impl.ClusterStateProvider;
+import org.apache.solr.client.solrj.request.AbstractUpdateRequest;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
+import org.apache.solr.client.solrj.request.QueryRequest;
 import org.apache.solr.client.solrj.request.RequestWriter;
 import org.apache.solr.client.solrj.request.UpdateRequest;
 import org.apache.solr.client.solrj.response.RequestStatusState;
@@ -333,6 +335,17 @@ public class SimCloudManager implements SolrCloudManager {
     return new SolrClient() {
       @Override
       public NamedList<Object> request(SolrRequest request, String collection) throws SolrServerException, IOException {
+        if (collection != null) {
+          if (request instanceof AbstractUpdateRequest) {
+            ((AbstractUpdateRequest)request).setParam("collection", collection);
+          } else if (request instanceof QueryRequest) {
+            ModifiableSolrParams params = new ModifiableSolrParams(request.getParams());
+            params.set("collection", collection);
+            request = new QueryRequest(params);
+          } else {
+            throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "when collection != null only UpdateRequest and QueryRequest are supported: request=" + request + ", collection=" + collection);
+          }
+        }
         SolrResponse rsp = SimCloudManager.this.request(request);
         return rsp.getResponse();
       }
@@ -508,14 +521,17 @@ public class SimCloudManager implements SolrCloudManager {
       incrementCount("update");
       // support only updates to the system collection
       UpdateRequest ureq = (UpdateRequest)req;
-      if (ureq.getCollection() == null || !ureq.getCollection().equals(CollectionAdminParams.SYSTEM_COLL)) {
-        throw new UnsupportedOperationException("Only .system updates are supported but got: " + req);
+      String collection = ureq.getCollection();
+      if (collection != null && !collection.equals(CollectionAdminParams.SYSTEM_COLL)) {
+        // simulate an update
+        return clusterStateProvider.simUpdate(ureq);
+      } else {
+        List<SolrInputDocument> docs = ureq.getDocuments();
+        if (docs != null) {
+          systemColl.addAll(docs);
+        }
+        return new UpdateResponse();
       }
-      List<SolrInputDocument> docs = ureq.getDocuments();
-      if (docs != null) {
-        systemColl.addAll(docs);
-      }
-      return new UpdateResponse();
     }
     // support only a specific subset of collection admin ops
     if (!(req instanceof CollectionAdminRequest)) {
