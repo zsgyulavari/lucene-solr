@@ -19,6 +19,7 @@ package org.apache.solr.cloud.autoscaling;
 
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,20 +42,25 @@ import org.apache.solr.cloud.SolrCloudTestCase;
 import org.apache.solr.cloud.autoscaling.sim.SimCloudManager;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.cloud.ClusterState;
+import org.apache.solr.common.cloud.ZkNodeProps;
+import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.Pair;
 import org.apache.solr.common.util.TimeSource;
+import org.apache.solr.common.util.Utils;
 import org.apache.solr.core.SolrResourceLoader;
 import org.apache.solr.util.LogLevel;
 import org.junit.After;
 import org.junit.AfterClass;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import static org.apache.solr.cloud.autoscaling.AutoScalingHandlerTest.createAutoScalingRequest;
+import static org.apache.solr.common.cloud.ZkStateReader.SOLR_AUTOSCALING_CONF_PATH;
 
 /**
  *
@@ -68,23 +74,31 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
   private static TimeSource timeSource;
   private static SolrResourceLoader loader;
 
+  private static int SPEED;
+
   private AutoScaling.TriggerEventProcessor noFirstRunProcessor = event -> {
     fail("Did not expect the processor to fire on first run! event=" + event);
     return true;
   };
   private static final long WAIT_FOR_DELTA_NANOS = TimeUnit.MILLISECONDS.toNanos(2);
 
+  static Map<String, List<CapturedEvent>> listenerEvents = new ConcurrentHashMap<>();
+  static CountDownLatch listenerCreated = new CountDownLatch(1);
+  static CountDownLatch finished = new CountDownLatch(1);
+
   @BeforeClass
   public static void setupCluster() throws Exception {
     configureCluster(2)
         .addConfig("conf", configset("cloud-minimal"))
         .configure();
-    if (random().nextBoolean() && false) {
+    if (random().nextBoolean()) {
       cloudManager = cluster.getJettySolrRunner(0).getCoreContainer().getZkController().getSolrCloudManager();
       solrClient = cluster.getSolrClient();
       loader = cluster.getJettySolrRunner(0).getCoreContainer().getResourceLoader();
+      SPEED = 1;
     } else {
-      cloudManager = SimCloudManager.createCluster(2, TimeSource.get("simTime:50"));
+      SPEED = 50;
+      cloudManager = SimCloudManager.createCluster(2, TimeSource.get("simTime:" + SPEED));
       // wait for defaults to be applied - due to accelerated time sometimes we may miss this
       cloudManager.getTimeSource().sleep(10000);
       AutoScalingConfig cfg = cloudManager.getDistribStateManager().getAutoScalingConfig();
@@ -97,23 +111,18 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
 
   @After
   public void restoreDefaults() throws Exception {
-    SolrRequest req = createAutoScalingRequest(SolrRequest.METHOD.POST,
-        "{'set-trigger' : " + AutoScaling.SCHEDULED_MAINTENANCE_TRIGGER_DSL + "}");
-    NamedList<Object> response = solrClient.request(req);
-    assertEquals(response.get("result").toString(), "success");
-    AutoScalingConfig autoScalingConfig = cloudManager.getDistribStateManager().getAutoScalingConfig();
-    if (autoScalingConfig.getTriggerListenerConfigs().containsKey("foo")) {
-      String cmd = "{" +
-          "'remove-listener' : {'name' : 'foo'}" +
-          "}";
-      response = solrClient.request(createAutoScalingRequest(SolrRequest.METHOD.POST, cmd));
-      assertEquals(response.get("result").toString(), "success");
-    }
     if (cloudManager instanceof SimCloudManager) {
+      log.info(((SimCloudManager) cloudManager).dumpClusterState(true));
       ((SimCloudManager) cloudManager).getSimClusterStateProvider().simDeleteAllCollections();
+      ((SimCloudManager) cloudManager).simResetOpCounts();
     } else {
       cluster.deleteAllCollections();
     }
+    cloudManager.getDistribStateManager().setData(SOLR_AUTOSCALING_CONF_PATH, Utils.toJSON(new ZkNodeProps()), -1);
+    cloudManager.getTimeSource().sleep(5000);
+    listenerEvents.clear();
+    listenerCreated = new CountDownLatch(1);
+    finished = new CountDownLatch(1);
   }
 
   @AfterClass
@@ -127,7 +136,7 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
 
   @Test
   public void testTrigger() throws Exception {
-    String collectionName = "collection1";
+    String collectionName = "testTrigger_collection";
     CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(collectionName,
         "conf", 2, 2).setMaxShardsPerNode(2);
     create.process(solrClient);
@@ -146,7 +155,7 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
         SolrInputDocument doc = new SolrInputDocument("id", "id-" + i);
         solrClient.add(collectionName, doc);
       }
-      solrClient.commit();
+      solrClient.commit(collectionName);
 
       AtomicBoolean fired = new AtomicBoolean(false);
       AtomicReference<TriggerEvent> eventRef = new AtomicReference<>();
@@ -195,6 +204,233 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
       assertTrue("shard1 should be split", shard1);
       assertTrue("shard2 should be split", shard2);
     }
+  }
+
+  public static class CapturingTriggerListener extends TriggerListenerBase {
+    @Override
+    public void configure(SolrResourceLoader loader, SolrCloudManager cloudManager, AutoScalingConfig.TriggerListenerConfig config) throws TriggerValidationException {
+      super.configure(loader, cloudManager, config);
+      listenerCreated.countDown();
+    }
+
+    @Override
+    public synchronized void onEvent(TriggerEvent event, TriggerEventProcessorStage stage, String actionName,
+                                     ActionContext context, Throwable error, String message) {
+      List<CapturedEvent> lst = listenerEvents.computeIfAbsent(config.name, s -> new ArrayList<>());
+      CapturedEvent ev = new CapturedEvent(timeSource.getTimeNs(), context, config, stage, actionName, event, message);
+      log.info("=======> " + ev);
+      lst.add(ev);
+    }
+  }
+
+  public static class FinishedProcessingListener extends TriggerListenerBase {
+
+    @Override
+    public void onEvent(TriggerEvent event, TriggerEventProcessorStage stage, String actionName, ActionContext context, Throwable error, String message) throws Exception {
+      finished.countDown();
+    }
+  }
+
+  @Test
+  public void testSplitIntegration() throws Exception {
+    String collectionName = "testSplitIntegration_collection";
+    CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(collectionName,
+        "conf", 2, 2).setMaxShardsPerNode(2);
+    create.process(solrClient);
+    CloudTestUtils.waitForState(cloudManager, "failed to create " + collectionName, collectionName,
+        CloudTestUtils.clusterShape(2, 2));
+
+    long waitForSeconds = 3 + random().nextInt(5);
+    String setTriggerCommand = "{" +
+        "'set-trigger' : {" +
+        "'name' : 'index_size_trigger'," +
+        "'event' : 'indexSize'," +
+        "'waitFor' : '" + waitForSeconds + "s'," +
+        "'unit' : 'docs'," +
+        "'above' : 10," +
+        "'below' : 4," +
+        "'enabled' : true," +
+        "'actions' : [{'name' : 'compute_plan', 'class' : 'solr.ComputePlanAction'}," +
+        "{'name' : 'execute_plan', 'class' : '" + ExecutePlanAction.class.getName() + "'}]" +
+        "}}";
+    SolrRequest req = createAutoScalingRequest(SolrRequest.METHOD.POST, setTriggerCommand);
+    NamedList<Object> response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    String setListenerCommand = "{" +
+        "'set-listener' : " +
+        "{" +
+        "'name' : 'capturing'," +
+        "'trigger' : 'index_size_trigger'," +
+        "'stage' : ['STARTED','ABORTED','SUCCEEDED','FAILED']," +
+        "'beforeAction' : ['compute_plan','execute_plan']," +
+        "'afterAction' : ['compute_plan','execute_plan']," +
+        "'class' : '" + CapturingTriggerListener.class.getName() + "'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    setListenerCommand = "{" +
+        "'set-listener' : " +
+        "{" +
+        "'name' : 'finished'," +
+        "'trigger' : 'index_size_trigger'," +
+        "'stage' : ['SUCCEEDED']," +
+        "'class' : '" + FinishedProcessingListener.class.getName() + "'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+
+    for (int i = 0; i < 25; i++) {
+      SolrInputDocument doc = new SolrInputDocument("id", "id-" + i);
+      solrClient.add(collectionName, doc);
+    }
+    solrClient.commit(collectionName);
+
+    timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
+
+    boolean await = finished.await(60000 / SPEED, TimeUnit.MILLISECONDS);
+    assertTrue("did not finish processing in time", await);
+    CloudTestUtils.waitForState(cloudManager, collectionName, 10, TimeUnit.SECONDS, CloudTestUtils.clusterShape(4, 2));
+    assertEquals(1, listenerEvents.size());
+    List<CapturedEvent> events = listenerEvents.get("capturing");
+    assertNotNull("'capturing' events not found", events);
+    assertEquals("events: " + events, 6, events.size());
+    assertEquals(TriggerEventProcessorStage.STARTED, events.get(0).stage);
+    assertEquals(TriggerEventProcessorStage.BEFORE_ACTION, events.get(1).stage);
+    assertEquals(TriggerEventProcessorStage.AFTER_ACTION, events.get(2).stage);
+    assertEquals(TriggerEventProcessorStage.BEFORE_ACTION, events.get(3).stage);
+    assertEquals(TriggerEventProcessorStage.AFTER_ACTION, events.get(4).stage);
+    assertEquals(TriggerEventProcessorStage.SUCCEEDED, events.get(5).stage);
+    // check ops
+    List<TriggerEvent.Op> ops = (List<TriggerEvent.Op>) events.get(4).event.getProperty(TriggerEvent.REQUESTED_OPS);
+    assertNotNull("should contain requestedOps", ops);
+    assertEquals("number of ops", 2, ops.size());
+    boolean shard1 = false;
+    boolean shard2 = false;
+    for (TriggerEvent.Op op : ops) {
+      assertEquals(CollectionParams.CollectionAction.SPLITSHARD, op.getAction());
+      Set<Pair<String, String>> hints = (Set<Pair<String, String>>)op.getHints().get(Suggester.Hint.COLL_SHARD);
+      assertNotNull("hints", hints);
+      assertEquals("hints", 1, hints.size());
+      Pair<String, String> p = hints.iterator().next();
+      assertEquals(collectionName, p.first());
+      if (p.second().equals("shard1")) {
+        shard1 = true;
+      } else if (p.second().equals("shard2")) {
+        shard2 = true;
+      } else {
+        fail("unexpected shard name " + p.second());
+      }
+    }
+    assertTrue("shard1 should be split", shard1);
+    assertTrue("shard2 should be split", shard2);
+
+  }
+
+  @Test
+  public void testMergeIntegration() throws Exception {
+    String collectionName = "testMergeIntegration_collection";
+    CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(collectionName,
+        "conf", 2, 2).setMaxShardsPerNode(2);
+    create.process(solrClient);
+    CloudTestUtils.waitForState(cloudManager, "failed to create " + collectionName, collectionName,
+        CloudTestUtils.clusterShape(2, 2));
+
+    for (int i = 0; i < 10; i++) {
+      SolrInputDocument doc = new SolrInputDocument("id", "id-" + (i * 100));
+      solrClient.add(collectionName, doc);
+    }
+    solrClient.commit(collectionName);
+
+    long waitForSeconds = 3 + random().nextInt(5);
+    String setTriggerCommand = "{" +
+        "'set-trigger' : {" +
+        "'name' : 'index_size_trigger'," +
+        "'event' : 'indexSize'," +
+        "'waitFor' : '" + waitForSeconds + "s'," +
+        "'unit' : 'docs'," +
+        "'above' : 40," +
+        "'below' : 4," +
+        "'enabled' : true," +
+        "'actions' : [{'name' : 'compute_plan', 'class' : 'solr.ComputePlanAction'}," +
+        "{'name' : 'execute_plan', 'class' : '" + ExecutePlanAction.class.getName() + "'}]" +
+        "}}";
+    SolrRequest req = createAutoScalingRequest(SolrRequest.METHOD.POST, setTriggerCommand);
+    NamedList<Object> response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    String setListenerCommand = "{" +
+        "'set-listener' : " +
+        "{" +
+        "'name' : 'capturing'," +
+        "'trigger' : 'index_size_trigger'," +
+        "'stage' : ['STARTED','ABORTED','SUCCEEDED','FAILED']," +
+        "'beforeAction' : ['compute_plan','execute_plan']," +
+        "'afterAction' : ['compute_plan','execute_plan']," +
+        "'class' : '" + CapturingTriggerListener.class.getName() + "'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    setListenerCommand = "{" +
+        "'set-listener' : " +
+        "{" +
+        "'name' : 'finished'," +
+        "'trigger' : 'index_size_trigger'," +
+        "'stage' : ['SUCCEEDED']," +
+        "'class' : '" + FinishedProcessingListener.class.getName() + "'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    // delete some docs to trigger a merge
+    for (int i = 0; i < 5; i++) {
+      solrClient.deleteById(collectionName, "id-" + (i * 100));
+    }
+    solrClient.commit(collectionName);
+
+    timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
+
+    boolean await = finished.await(60000 / SPEED, TimeUnit.MILLISECONDS);
+    assertTrue("did not finish processing in time", await);
+    assertEquals(1, listenerEvents.size());
+    List<CapturedEvent> events = listenerEvents.get("capturing");
+    assertNotNull("'capturing' events not found", events);
+    assertEquals("events: " + events, 6, events.size());
+    assertEquals(TriggerEventProcessorStage.STARTED, events.get(0).stage);
+    assertEquals(TriggerEventProcessorStage.BEFORE_ACTION, events.get(1).stage);
+    assertEquals(TriggerEventProcessorStage.AFTER_ACTION, events.get(2).stage);
+    assertEquals(TriggerEventProcessorStage.BEFORE_ACTION, events.get(3).stage);
+    assertEquals(TriggerEventProcessorStage.AFTER_ACTION, events.get(4).stage);
+    assertEquals(TriggerEventProcessorStage.SUCCEEDED, events.get(5).stage);
+    // check ops
+    List<TriggerEvent.Op> ops = (List<TriggerEvent.Op>) events.get(4).event.getProperty(TriggerEvent.REQUESTED_OPS);
+    assertNotNull("should contain requestedOps", ops);
+    assertTrue("number of ops: " + ops, ops.size() > 0);
+    for (TriggerEvent.Op op : ops) {
+      assertEquals(CollectionParams.CollectionAction.MERGESHARDS, op.getAction());
+      Set<Pair<String, String>> hints = (Set<Pair<String, String>>)op.getHints().get(Suggester.Hint.COLL_SHARD);
+      assertNotNull("hints", hints);
+      assertEquals("hints", 2, hints.size());
+      Pair<String, String> p = hints.iterator().next();
+      assertEquals(collectionName, p.first());
+    }
+
+    // TODO: fix this once MERGESHARDS is supported
+    List<TriggerEvent.Op> unsupportedOps = (List<TriggerEvent.Op>)events.get(2).context.get("properties.unsupportedOps");
+    assertNotNull("should have unsupportedOps", unsupportedOps);
+    assertEquals(unsupportedOps.toString() + "\n" + ops, ops.size(), unsupportedOps.size());
+    unsupportedOps.forEach(op -> assertEquals(CollectionParams.CollectionAction.MERGESHARDS, op.getAction()));
   }
 
   private Map<String, Object> createTriggerProps(long waitForSeconds) {

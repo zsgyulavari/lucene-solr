@@ -114,18 +114,24 @@ public class CloudTestUtils {
    */
   public static CollectionStatePredicate clusterShape(int expectedShards, int expectedReplicas) {
     return (liveNodes, collectionState) -> {
-      if (collectionState == null)
+      if (collectionState == null) {
+        log.debug("-- null collection");
         return false;
-      if (collectionState.getSlices().size() != expectedShards)
+      }
+      if (collectionState.getActiveSlices().size() != expectedShards) {
+        log.debug("-- wrong number of active slices, expected=" + expectedShards + ", found=" + collectionState.getSlices().size());
         return false;
-      for (Slice slice : collectionState) {
+      }
+      for (Slice slice : collectionState.getActiveSlices()) {
         int activeReplicas = 0;
         for (Replica replica : slice) {
           if (replica.isActive(liveNodes))
             activeReplicas++;
         }
-        if (activeReplicas != expectedReplicas)
+        if (activeReplicas != expectedReplicas) {
+          log.debug("-- wrong number of active replicas in slice " + slice.getName() + ", expected=" + expectedReplicas + ", found=" + activeReplicas);
           return false;
+        }
       }
       return true;
     };

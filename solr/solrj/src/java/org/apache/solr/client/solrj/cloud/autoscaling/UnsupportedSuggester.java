@@ -42,6 +42,11 @@ public class UnsupportedSuggester extends Suggester {
   }
 
   @Override
+  public CollectionParams.CollectionAction getAction() {
+    return action;
+  }
+
+  @Override
   SolrRequest init() {
     log.warn("Unsupported suggester for action " + action + " with hints " + hints + " - no suggestion available");
     return null;

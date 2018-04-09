@@ -219,11 +219,8 @@ public class ComputePlanAction extends TriggerActionBase {
         for (Map.Entry<Suggester.Hint, Object> e : op.getHints().entrySet()) {
           suggester = suggester.hint(e.getKey(), e.getValue());
         }
-        if (++start >= ops.size()) {
-          event.getProperties().remove(START);
-        } else {
-          event.getProperties().put(START, start);
-        }
+        start++;
+        event.getProperties().put(START, start);
         break;
       case SCHEDULED:
         String preferredOp = (String) event.getProperty(AutoScalingParams.PREFERRED_OP, CollectionParams.CollectionAction.MOVEREPLICA.toLower());

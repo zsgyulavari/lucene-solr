@@ -169,7 +169,7 @@ public class IndexSizeTrigger extends TriggerBase {
       return;
     }
 
-    // replica name / info + size
+    // replica name / info + size, retrieved from leaders only
     Map<String, ReplicaInfo> currentSizes = new HashMap<>();
 
     try {
@@ -235,7 +235,9 @@ public class IndexSizeTrigger extends TriggerBase {
             // verify that it's a Number
             if (!(size instanceof Number)) {
               log.warn("invalid size value - not a number: '" + size + "' is " + size.getClass().getName());
+              return;
             }
+            info = (ReplicaInfo)info.clone();
             info.getVariables().put(SIZE_PROP, ((Number) size).longValue());
             currentSizes.put(info.getCore(), info);
           }
@@ -295,6 +297,7 @@ public class IndexSizeTrigger extends TriggerBase {
       if (replicas.size() < 2) {
         return;
       }
+      // sort by increasing size
       replicas.sort((r1, r2) -> {
         long delta = (Long) r1.getVariable(SIZE_PROP) - (Long) r2.getVariable(SIZE_PROP);
         if (delta > 0) {
@@ -305,7 +308,7 @@ public class IndexSizeTrigger extends TriggerBase {
           return 0;
         }
       });
-      // take top two
+      // take top two smallest
       TriggerEvent.Op op = new TriggerEvent.Op(belowOp);
       op.addHint(Suggester.Hint.COLL_SHARD, new Pair(coll, replicas.get(0).getShard()));
       op.addHint(Suggester.Hint.COLL_SHARD, new Pair(coll, replicas.get(1).getShard()));
