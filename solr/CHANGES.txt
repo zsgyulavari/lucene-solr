@@ -107,7 +107,15 @@ Bug Fixes
   (Susheel Kumar, Aibao Luo, Nikkolay Martinov via Erick Erickson)
 
 * SOLR-12172: Fixed race condition that could cause an invalid set of collection properties to be kept in
-  memory when multiple collection property changes are done in a short period of time. (Tomás Fernández Löbbe) 
+  memory when multiple collection property changes are done in a short period of time. (Tomás Fernández Löbbe)
+  
+* SOLR-11929: UpdateLog metrics are not initialized on core reload.  (ab, Steve Rowe) 
+
+* SOLR-12199: TestReplicationHandler.doTestRepeater(): TEST_PORT interpolation failure: 
+  Server refused connection at: http://127.0.0.1:TEST_PORT/solr  (Mikhail Khludnev, Dawid Weiss, Steve Rowe)
+
+* SOLR-12096: Fixed inconsistent results format of subquery transformer for distributed search (multi-shard).
+  (Munendra S N, Mikhail Khludnev via Ishan Chattopadhyaya)
 
 Optimizations
 ----------------------
@@ -165,6 +173,9 @@ Other Changes
 
 * SOLR-12176: Improve FORCELEADER to handle the case when a replica win the election but does not present
   in clusterstate (Cao Manh Dat)
+
+* SOLR-12134: ref-guide 'bare-bones html' validation is now part of 'ant documentation' and validates
+  javadoc links locally. (hossman)
 
 ==================  7.3.0 ==================
 
@@ -378,7 +389,7 @@ Bug Fixes
 
 * SOLR-11988: Fix exists() method in EphemeralDirectoryFactory/MockDirectoryFactory to prevent false positives (hossman)
 
-* SOLR-11971: Don't allow referal to external resources in DataImportHandler's dataConfig request parameter.
+* SOLR-11971: Don't allow referal to external resources in DataImportHandler's dataConfig request parameter (CVE-2018-1308).
   (麦 香浓郁, Uwe Schindler)
 
 * SOLR-12021: Fixed a bug in ApiSpec and other JSON resource loading that was causing unclosed file handles (hossman)
