@@ -29,6 +29,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.apache.lucene.util.TestUtil;
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.cloud.SolrCloudManager;
@@ -36,6 +37,7 @@ import org.apache.solr.client.solrj.cloud.autoscaling.AutoScalingConfig;
 import org.apache.solr.client.solrj.cloud.autoscaling.Suggester;
 import org.apache.solr.client.solrj.cloud.autoscaling.TriggerEventProcessorStage;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
+import org.apache.solr.client.solrj.request.UpdateRequest;
 import org.apache.solr.cloud.CloudTestUtils;
 import org.apache.solr.cloud.SolrCloudTestCase;
 import org.apache.solr.cloud.autoscaling.sim.SimCloudManager;
@@ -409,6 +411,202 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
     assertEquals(TriggerEventProcessorStage.SUCCEEDED, events.get(5).stage);
     // check ops
     List<TriggerEvent.Op> ops = (List<TriggerEvent.Op>) events.get(4).event.getProperty(TriggerEvent.REQUESTED_OPS);
+    assertNotNull("should contain requestedOps", ops);
+    assertTrue("number of ops: " + ops, ops.size() > 0);
+    for (TriggerEvent.Op op : ops) {
+      assertEquals(CollectionParams.CollectionAction.MERGESHARDS, op.getAction());
+      Set<Pair<String, String>> hints = (Set<Pair<String, String>>)op.getHints().get(Suggester.Hint.COLL_SHARD);
+      assertNotNull("hints", hints);
+      assertEquals("hints", 2, hints.size());
+      Pair<String, String> p = hints.iterator().next();
+      assertEquals(collectionName, p.first());
+    }
+
+    // TODO: fix this once MERGESHARDS is supported
+    List<TriggerEvent.Op> unsupportedOps = (List<TriggerEvent.Op>)events.get(2).context.get("properties.unsupportedOps");
+    assertNotNull("should have unsupportedOps", unsupportedOps);
+    assertEquals(unsupportedOps.toString() + "\n" + ops, ops.size(), unsupportedOps.size());
+    unsupportedOps.forEach(op -> assertEquals(CollectionParams.CollectionAction.MERGESHARDS, op.getAction()));
+  }
+
+  @Test
+  public void testMixedBounds() throws Exception {
+    if (cloudManager instanceof SimCloudManager) {
+      log.warn("Requires SOLR-12208");
+      return;
+    }
+
+    String collectionName = "testMixedBounds_collection";
+    CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(collectionName,
+        "conf", 2, 2).setMaxShardsPerNode(2);
+    create.process(solrClient);
+    CloudTestUtils.waitForState(cloudManager, "failed to create " + collectionName, collectionName,
+        CloudTestUtils.clusterShape(2, 2));
+
+    for (int j = 0; j < 10; j++) {
+      UpdateRequest ureq = new UpdateRequest();
+      ureq.setParam("collection", collectionName);
+      for (int i = 0; i < 100; i++) {
+        SolrInputDocument doc = new SolrInputDocument("id", "id-" + (i * 100) + "-" + j);
+        doc.addField("foo", TestUtil.randomSimpleString(random(), 130, 130));
+        ureq.add(doc);
+      }
+      solrClient.request(ureq);
+    }
+    solrClient.commit(collectionName);
+
+    long waitForSeconds = 3 + random().nextInt(5);
+
+    // the trigger is initially disabled so that we have time to add listeners
+    // and have them capture all events once the trigger is enabled
+    String setTriggerCommand = "{" +
+        "'set-trigger' : {" +
+        "'name' : 'index_size_trigger'," +
+        "'event' : 'indexSize'," +
+        "'waitFor' : '" + waitForSeconds + "s'," +
+        // don't hit this limit when indexing
+        "'aboveDocs' : 10000," +
+        // hit this limit when deleting
+        "'belowDocs' : 100," +
+        // hit this limit when indexing
+        "'aboveBytes' : 150000," +
+        // don't hit this limit when deleting
+        "'belowBytes' : 10," +
+        "'enabled' : false," +
+        "'actions' : [{'name' : 'compute_plan', 'class' : 'solr.ComputePlanAction'}," +
+        "{'name' : 'execute_plan', 'class' : '" + ExecutePlanAction.class.getName() + "'}]" +
+        "}}";
+    SolrRequest req = createAutoScalingRequest(SolrRequest.METHOD.POST, setTriggerCommand);
+    NamedList<Object> response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    String setListenerCommand = "{" +
+        "'set-listener' : " +
+        "{" +
+        "'name' : 'capturing'," +
+        "'trigger' : 'index_size_trigger'," +
+        "'stage' : ['STARTED','ABORTED','SUCCEEDED','FAILED']," +
+        "'beforeAction' : ['compute_plan','execute_plan']," +
+        "'afterAction' : ['compute_plan','execute_plan']," +
+        "'class' : '" + CapturingTriggerListener.class.getName() + "'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    setListenerCommand = "{" +
+        "'set-listener' : " +
+        "{" +
+        "'name' : 'finished'," +
+        "'trigger' : 'index_size_trigger'," +
+        "'stage' : ['SUCCEEDED']," +
+        "'class' : '" + FinishedProcessingListener.class.getName() + "'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    // now enable the trigger
+    String resumeTriggerCommand = "{" +
+        "'resume-trigger' : {" +
+        "'name' : 'index_size_trigger'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, resumeTriggerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
+
+    boolean await = finished.await(90000 / SPEED, TimeUnit.MILLISECONDS);
+    assertTrue("did not finish processing in time", await);
+    assertEquals(1, listenerEvents.size());
+    List<CapturedEvent> events = listenerEvents.get("capturing");
+    assertNotNull("'capturing' events not found", events);
+    assertEquals("events: " + events, 6, events.size());
+    assertEquals(TriggerEventProcessorStage.STARTED, events.get(0).stage);
+    assertEquals(TriggerEventProcessorStage.BEFORE_ACTION, events.get(1).stage);
+    assertEquals(TriggerEventProcessorStage.AFTER_ACTION, events.get(2).stage);
+    assertEquals(TriggerEventProcessorStage.BEFORE_ACTION, events.get(3).stage);
+    assertEquals(TriggerEventProcessorStage.AFTER_ACTION, events.get(4).stage);
+    assertEquals(TriggerEventProcessorStage.SUCCEEDED, events.get(5).stage);
+
+    // collection should have 2 inactive and 4 active shards
+    CloudTestUtils.waitForState(cloudManager, "failed to create " + collectionName, collectionName,
+        CloudTestUtils.clusterShape(6, 2, true));
+
+    // check ops
+    List<TriggerEvent.Op> ops = (List<TriggerEvent.Op>) events.get(4).event.getProperty(TriggerEvent.REQUESTED_OPS);
+    assertNotNull("should contain requestedOps", ops);
+    assertEquals("number of ops", 2, ops.size());
+    boolean shard1 = false;
+    boolean shard2 = false;
+    for (TriggerEvent.Op op : ops) {
+      assertEquals(CollectionParams.CollectionAction.SPLITSHARD, op.getAction());
+      Set<Pair<String, String>> hints = (Set<Pair<String, String>>)op.getHints().get(Suggester.Hint.COLL_SHARD);
+      assertNotNull("hints", hints);
+      assertEquals("hints", 1, hints.size());
+      Pair<String, String> p = hints.iterator().next();
+      assertEquals(collectionName, p.first());
+      if (p.second().equals("shard1")) {
+        shard1 = true;
+      } else if (p.second().equals("shard2")) {
+        shard2 = true;
+      } else {
+        fail("unexpected shard name " + p.second());
+      }
+    }
+    assertTrue("shard1 should be split", shard1);
+    assertTrue("shard2 should be split", shard2);
+
+    // now delete most of docs to trigger belowDocs condition
+    listenerEvents.clear();
+    finished = new CountDownLatch(1);
+
+    // suspend the trigger first so that we can safely delete all docs
+    String suspendTriggerCommand = "{" +
+        "'suspend-trigger' : {" +
+        "'name' : 'index_size_trigger'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, suspendTriggerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    for (int j = 0; j < 8; j++) {
+      UpdateRequest ureq = new UpdateRequest();
+      ureq.setParam("collection", collectionName);
+      for (int i = 0; i < 95; i++) {
+        ureq.deleteById("id-" + (i * 100) + "-" + j);
+      }
+      solrClient.request(ureq);
+    }
+    solrClient.commit(collectionName);
+
+    // resume trigger
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, resumeTriggerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
+
+    await = finished.await(90000 / SPEED, TimeUnit.MILLISECONDS);
+    assertTrue("did not finish processing in time", await);
+    assertEquals(1, listenerEvents.size());
+    events = listenerEvents.get("capturing");
+    assertNotNull("'capturing' events not found", events);
+    assertEquals("events: " + events, 6, events.size());
+    assertEquals(TriggerEventProcessorStage.STARTED, events.get(0).stage);
+    assertEquals(TriggerEventProcessorStage.BEFORE_ACTION, events.get(1).stage);
+    assertEquals(TriggerEventProcessorStage.AFTER_ACTION, events.get(2).stage);
+    assertEquals(TriggerEventProcessorStage.BEFORE_ACTION, events.get(3).stage);
+    assertEquals(TriggerEventProcessorStage.AFTER_ACTION, events.get(4).stage);
+    assertEquals(TriggerEventProcessorStage.SUCCEEDED, events.get(5).stage);
+
+    // check ops
+    ops = (List<TriggerEvent.Op>) events.get(4).event.getProperty(TriggerEvent.REQUESTED_OPS);
     assertNotNull("should contain requestedOps", ops);
     assertTrue("number of ops: " + ops, ops.size() > 0);
     for (TriggerEvent.Op op : ops) {

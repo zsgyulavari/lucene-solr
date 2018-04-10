@@ -38,6 +38,7 @@ import org.apache.solr.common.SolrException;
 import org.apache.solr.common.cloud.ClusterState;
 import org.apache.solr.common.cloud.DocCollection;
 import org.apache.solr.common.cloud.Replica;
+import org.apache.solr.common.cloud.Slice;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.util.Pair;
 import org.apache.solr.common.util.StrUtils;
@@ -61,10 +62,11 @@ public class IndexSizeTrigger extends TriggerBase {
   public static final String BELOW_OP_PROP = "belowOp";
   public static final String COLLECTIONS_PROP = "collections";
 
-  public static final String BYTES_SIZE_PROP = "__bytesSize__";
-  public static final String DOCS_SIZE_PROP = "__docsSize__";
+  public static final String BYTES_SIZE_PROP = "__bytes__";
+  public static final String DOCS_SIZE_PROP = "__docs__";
   public static final String ABOVE_SIZE_PROP = "aboveSize";
   public static final String BELOW_SIZE_PROP = "belowSize";
+  public static final String VIOLATION_PROP = "violationType";
 
   public enum Unit { bytes, docs }
 
@@ -204,8 +206,12 @@ public class IndexSizeTrigger extends TriggerBase {
           DocCollection docCollection = clusterState.getCollection(coll);
 
           shards.forEach((sh, replicas) -> {
-            // check only the leader
-            Replica r = docCollection.getSlice(sh).getLeader();
+            // check only the leader of a replica in active shard
+            Slice s = docCollection.getSlice(sh);
+            if (s.getState() != Slice.State.ACTIVE) {
+              return;
+            }
+            Replica r = s.getLeader();
             // no leader - don't do anything
             if (r == null) {
               return;
@@ -219,7 +225,7 @@ public class IndexSizeTrigger extends TriggerBase {
               }
             }
             if (info == null) {
-              // probably replica is not on this node
+              // probably replica is not on this node?
               return;
             }
             // we have to translate to the metrics registry name, which uses "_replica_nN" as suffix
@@ -278,6 +284,11 @@ public class IndexSizeTrigger extends TriggerBase {
           ReplicaInfo info = e.getValue();
           List<ReplicaInfo> infos = aboveSize.computeIfAbsent(info.getCollection(), c -> new ArrayList<>());
           if (!infos.contains(info)) {
+            if ((Long)e.getValue().getVariable(BYTES_SIZE_PROP) > aboveBytes) {
+              info.getVariables().put(VIOLATION_PROP, ABOVE_BYTES_PROP);
+            } else {
+              info.getVariables().put(VIOLATION_PROP, ABOVE_DOCS_PROP);
+            }
             infos.add(info);
           }
         });
@@ -292,6 +303,11 @@ public class IndexSizeTrigger extends TriggerBase {
           ReplicaInfo info = e.getValue();
           List<ReplicaInfo> infos = belowSize.computeIfAbsent(info.getCollection(), c -> new ArrayList<>());
           if (!infos.contains(info)) {
+            if ((Long)e.getValue().getVariable(BYTES_SIZE_PROP) < belowBytes) {
+              info.getVariables().put(VIOLATION_PROP, BELOW_BYTES_PROP);
+            } else {
+              info.getVariables().put(VIOLATION_PROP, BELOW_DOCS_PROP);
+            }
             infos.add(info);
           }
         });
@@ -335,7 +351,11 @@ public class IndexSizeTrigger extends TriggerBase {
           return 0;
         }
       });
-      // take the top two smallest
+
+      // TODO: MERGESHARDS is not implemented yet. For now take the top two smallest shards
+      // TODO: but in the future we probably need to get ones with adjacent ranges.
+
+      // TODO: generate as many MERGESHARDS as needed to consume all belowSize shards
       TriggerEvent.Op op = new TriggerEvent.Op(belowOp);
       op.addHint(Suggester.Hint.COLL_SHARD, new Pair(coll, replicas.get(0).getShard()));
       op.addHint(Suggester.Hint.COLL_SHARD, new Pair(coll, replicas.get(1).getShard()));
