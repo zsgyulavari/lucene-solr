@@ -24,7 +24,7 @@ import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.common.util.Pair;
 
 /**
- * This suggester produces a SPLITSHARD request using provided {@link Hint#COLL_SHARD} value.
+ * This suggester produces a SPLITSHARD request using provided {@link org.apache.solr.client.solrj.cloud.autoscaling.Suggester.Hint#COLL_SHARD} value.
  */
 class SplitShardSuggester extends Suggester {
 

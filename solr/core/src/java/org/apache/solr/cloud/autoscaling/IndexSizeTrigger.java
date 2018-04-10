@@ -20,12 +20,10 @@ package org.apache.solr.cloud.autoscaling;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -55,64 +53,85 @@ import org.slf4j.LoggerFactory;
 public class IndexSizeTrigger extends TriggerBase {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-  public static final String ABOVE_PROP = "above";
+  public static final String ABOVE_BYTES_PROP = "aboveBytes";
+  public static final String ABOVE_DOCS_PROP = "aboveDocs";
   public static final String ABOVE_OP_PROP = "aboveOp";
-  public static final String BELOW_PROP = "below";
+  public static final String BELOW_BYTES_PROP = "belowBytes";
+  public static final String BELOW_DOCS_PROP = "belowDocs";
   public static final String BELOW_OP_PROP = "belowOp";
-  public static final String UNIT_PROP = "unit";
   public static final String COLLECTIONS_PROP = "collections";
 
-  public static final String SIZE_PROP = "__indexSize__";
+  public static final String BYTES_SIZE_PROP = "__bytesSize__";
+  public static final String DOCS_SIZE_PROP = "__docsSize__";
   public static final String ABOVE_SIZE_PROP = "aboveSize";
   public static final String BELOW_SIZE_PROP = "belowSize";
 
   public enum Unit { bytes, docs }
 
-  private long above, below;
+  private long aboveBytes, aboveDocs, belowBytes, belowDocs;
   private CollectionParams.CollectionAction aboveOp, belowOp;
-  private Unit unit;
   private final Set<String> collections = new HashSet<>();
   private final Map<String, Long> lastEventMap = new ConcurrentHashMap<>();
 
   public IndexSizeTrigger(String name) {
     super(TriggerEventType.INDEXSIZE, name);
     TriggerUtils.validProperties(validProperties,
-        ABOVE_PROP, BELOW_PROP, UNIT_PROP, COLLECTIONS_PROP);
+        ABOVE_BYTES_PROP, ABOVE_DOCS_PROP, BELOW_BYTES_PROP, BELOW_DOCS_PROP, COLLECTIONS_PROP);
   }
 
   @Override
   public void configure(SolrResourceLoader loader, SolrCloudManager cloudManager, Map<String, Object> properties) throws TriggerValidationException {
     super.configure(loader, cloudManager, properties);
-    String unitStr = String.valueOf(properties.getOrDefault(UNIT_PROP, Unit.bytes));
+    String aboveStr = String.valueOf(properties.getOrDefault(ABOVE_BYTES_PROP, Long.MAX_VALUE));
+    String belowStr = String.valueOf(properties.getOrDefault(BELOW_BYTES_PROP, -1));
     try {
-      unit = Unit.valueOf(unitStr.toLowerCase(Locale.ROOT));
-    } catch (Exception e) {
-      throw new TriggerValidationException(getName(), UNIT_PROP, "invalid unit, must be one of " + Arrays.toString(Unit.values()));
-    }
-    String aboveStr = String.valueOf(properties.getOrDefault(ABOVE_PROP, Long.MAX_VALUE));
-    String belowStr = String.valueOf(properties.getOrDefault(BELOW_PROP, -1));
-    try {
-      above = Long.parseLong(aboveStr);
-      if (above <= 0) {
+      aboveBytes = Long.parseLong(aboveStr);
+      if (aboveBytes <= 0) {
         throw new Exception("value must be > 0");
       }
     } catch (Exception e) {
-      throw new TriggerValidationException(getName(), ABOVE_PROP, "invalid value '" + aboveStr + "': " + e.toString());
+      throw new TriggerValidationException(getName(), ABOVE_BYTES_PROP, "invalid value '" + aboveStr + "': " + e.toString());
     }
     try {
-      below = Long.parseLong(belowStr);
-      if (below < 0) {
-        below = -1;
+      belowBytes = Long.parseLong(belowStr);
+      if (belowBytes < 0) {
+        belowBytes = -1;
       }
     } catch (Exception e) {
-      throw new TriggerValidationException(getName(), BELOW_PROP, "invalid value '" + belowStr + "': " + e.toString());
+      throw new TriggerValidationException(getName(), BELOW_BYTES_PROP, "invalid value '" + belowStr + "': " + e.toString());
     }
     // below must be at least 2x smaller than above, otherwise splitting a shard
     // would immediately put the shard below the threshold and cause the mergeshards action
-    if (below > 0 && (below * 2 > above)) {
-      throw new TriggerValidationException(getName(), BELOW_PROP,
-          "invalid value " + below + ", should be less than half of '" + ABOVE_PROP + "' value, which is " + above);
+    if (belowBytes > 0 && (belowBytes * 2 > aboveBytes)) {
+      throw new TriggerValidationException(getName(), BELOW_BYTES_PROP,
+          "invalid value " + belowBytes + ", should be less than half of '" + ABOVE_BYTES_PROP + "' value, which is " + aboveBytes);
     }
+    // do the same for docs bounds
+    aboveStr = String.valueOf(properties.getOrDefault(ABOVE_DOCS_PROP, Long.MAX_VALUE));
+    belowStr = String.valueOf(properties.getOrDefault(BELOW_DOCS_PROP, -1));
+    try {
+      aboveDocs = Long.parseLong(aboveStr);
+      if (aboveDocs <= 0) {
+        throw new Exception("value must be > 0");
+      }
+    } catch (Exception e) {
+      throw new TriggerValidationException(getName(), ABOVE_DOCS_PROP, "invalid value '" + aboveStr + "': " + e.toString());
+    }
+    try {
+      belowDocs = Long.parseLong(belowStr);
+      if (belowDocs < 0) {
+        belowDocs = -1;
+      }
+    } catch (Exception e) {
+      throw new TriggerValidationException(getName(), BELOW_DOCS_PROP, "invalid value '" + belowStr + "': " + e.toString());
+    }
+    // below must be at least 2x smaller than above, otherwise splitting a shard
+    // would immediately put the shard below the threshold and cause the mergeshards action
+    if (belowDocs > 0 && (belowDocs * 2 > aboveDocs)) {
+      throw new TriggerValidationException(getName(), BELOW_DOCS_PROP,
+          "invalid value " + belowDocs + ", should be less than half of '" + ABOVE_DOCS_PROP + "' value, which is " + aboveDocs);
+    }
+
     String collectionsString = (String) properties.get(COLLECTIONS_PROP);
     if (collectionsString != null && !collectionsString.isEmpty()) {
       collections.addAll(StrUtils.splitSmart(collectionsString, ','));
@@ -209,17 +228,9 @@ public class IndexSizeTrigger extends TriggerBase {
               replicaName = info.getName(); // which is actually coreNode name...
             }
             String registry = SolrCoreMetricManager.createRegistryName(true, coll, sh, replicaName, null);
-            String tag;
-            switch (unit) {
-              case bytes:
-                tag = "metrics:" + registry + ":INDEX.size";
-                break;
-              case docs:
-                tag = "metrics:" + registry + ":SEARCHER.searcher.numDocs";
-                break;
-              default:
-                throw new UnsupportedOperationException("Unit " + unit + " not supported");
-            }
+            String tag = "metrics:" + registry + ":INDEX.sizeInBytes";
+            metricTags.put(tag, info);
+            tag = "metrics:" + registry + ":SEARCHER.searcher.numDocs";
             metricTags.put(tag, info);
           });
         });
@@ -228,7 +239,7 @@ public class IndexSizeTrigger extends TriggerBase {
         }
         Map<String, Object> sizes = cloudManager.getNodeStateProvider().getNodeValues(node, metricTags.keySet());
         sizes.forEach((tag, size) -> {
-          ReplicaInfo info = metricTags.get(tag);
+          final ReplicaInfo info = metricTags.get(tag);
           if (info == null) {
             log.warn("Missing replica info for response tag " + tag);
           } else {
@@ -237,9 +248,13 @@ public class IndexSizeTrigger extends TriggerBase {
               log.warn("invalid size value - not a number: '" + size + "' is " + size.getClass().getName());
               return;
             }
-            info = (ReplicaInfo)info.clone();
-            info.getVariables().put(SIZE_PROP, ((Number) size).longValue());
-            currentSizes.put(info.getCore(), info);
+
+            ReplicaInfo currentInfo = currentSizes.computeIfAbsent(info.getCore(), k -> (ReplicaInfo)info.clone());
+            if (tag.contains("INDEX")) {
+              currentInfo.getVariables().put(BYTES_SIZE_PROP, ((Number) size).longValue());
+            } else {
+              currentInfo.getVariables().put(DOCS_SIZE_PROP, ((Number) size).longValue());
+            }
           }
         });
       }
@@ -255,22 +270,30 @@ public class IndexSizeTrigger extends TriggerBase {
     // collection / list(info)
     Map<String, List<ReplicaInfo>> aboveSize = new HashMap<>();
     currentSizes.entrySet().stream()
-        .filter(e -> (Long)e.getValue().getVariable(SIZE_PROP) > above &&
-            waitForElapsed(e.getKey(), now, lastEventMap))
+        .filter(e -> (
+            (Long)e.getValue().getVariable(BYTES_SIZE_PROP) > aboveBytes ||
+            (Long)e.getValue().getVariable(DOCS_SIZE_PROP) > aboveDocs
+            ) && waitForElapsed(e.getKey(), now, lastEventMap))
         .forEach(e -> {
           ReplicaInfo info = e.getValue();
           List<ReplicaInfo> infos = aboveSize.computeIfAbsent(info.getCollection(), c -> new ArrayList<>());
-          infos.add(info);
+          if (!infos.contains(info)) {
+            infos.add(info);
+          }
         });
     // collection / list(info)
     Map<String, List<ReplicaInfo>> belowSize = new HashMap<>();
     currentSizes.entrySet().stream()
-        .filter(e -> (Long)e.getValue().getVariable(SIZE_PROP) < below &&
-            waitForElapsed(e.getKey(), now, lastEventMap))
+        .filter(e -> (
+            (Long)e.getValue().getVariable(BYTES_SIZE_PROP) < belowBytes ||
+            (Long)e.getValue().getVariable(DOCS_SIZE_PROP) < belowDocs
+            ) && waitForElapsed(e.getKey(), now, lastEventMap))
         .forEach(e -> {
           ReplicaInfo info = e.getValue();
           List<ReplicaInfo> infos = belowSize.computeIfAbsent(info.getCollection(), c -> new ArrayList<>());
-          infos.add(info);
+          if (!infos.contains(info)) {
+            infos.add(info);
+          }
         });
 
     if (aboveSize.isEmpty() && belowSize.isEmpty()) {
@@ -299,7 +322,11 @@ public class IndexSizeTrigger extends TriggerBase {
       }
       // sort by increasing size
       replicas.sort((r1, r2) -> {
-        long delta = (Long) r1.getVariable(SIZE_PROP) - (Long) r2.getVariable(SIZE_PROP);
+        // XXX this is not quite correct - if BYTES_SIZE_PROP decided that replica got here
+        // then we should be sorting by BYTES_SIZE_PROP. However, since DOCS and BYTES are
+        // loosely correlated it's simpler to sort just by docs (which better reflects the "too small"
+        // condition than index size, due to possibly existing deleted docs that still occupy space)
+        long delta = (Long) r1.getVariable(DOCS_SIZE_PROP) - (Long) r2.getVariable(DOCS_SIZE_PROP);
         if (delta > 0) {
           return 1;
         } else if (delta < 0) {
@@ -308,7 +335,7 @@ public class IndexSizeTrigger extends TriggerBase {
           return 0;
         }
       });
-      // take top two smallest
+      // take the top two smallest
       TriggerEvent.Op op = new TriggerEvent.Op(belowOp);
       op.addHint(Suggester.Hint.COLL_SHARD, new Pair(coll, replicas.get(0).getShard()));
       op.addHint(Suggester.Hint.COLL_SHARD, new Pair(coll, replicas.get(1).getShard()));

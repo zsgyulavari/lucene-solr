@@ -19,7 +19,6 @@ package org.apache.solr.cloud.autoscaling;
 
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,9 +40,7 @@ import org.apache.solr.cloud.CloudTestUtils;
 import org.apache.solr.cloud.SolrCloudTestCase;
 import org.apache.solr.cloud.autoscaling.sim.SimCloudManager;
 import org.apache.solr.common.SolrInputDocument;
-import org.apache.solr.common.cloud.ClusterState;
 import org.apache.solr.common.cloud.ZkNodeProps;
-import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.Pair;
@@ -53,7 +50,6 @@ import org.apache.solr.core.SolrResourceLoader;
 import org.apache.solr.util.LogLevel;
 import org.junit.After;
 import org.junit.AfterClass;
-import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.slf4j.Logger;
@@ -246,9 +242,8 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
         "'name' : 'index_size_trigger'," +
         "'event' : 'indexSize'," +
         "'waitFor' : '" + waitForSeconds + "s'," +
-        "'unit' : 'docs'," +
-        "'above' : 10," +
-        "'below' : 4," +
+        "'aboveDocs' : 10," +
+        "'belowDocs' : 4," +
         "'enabled' : true," +
         "'actions' : [{'name' : 'compute_plan', 'class' : 'solr.ComputePlanAction'}," +
         "{'name' : 'execute_plan', 'class' : '" + ExecutePlanAction.class.getName() + "'}]" +
@@ -354,9 +349,8 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
         "'name' : 'index_size_trigger'," +
         "'event' : 'indexSize'," +
         "'waitFor' : '" + waitForSeconds + "s'," +
-        "'unit' : 'docs'," +
-        "'above' : 40," +
-        "'below' : 4," +
+        "'aboveDocs' : 40," +
+        "'belowDocs' : 4," +
         "'enabled' : true," +
         "'actions' : [{'name' : 'compute_plan', 'class' : 'solr.ComputePlanAction'}," +
         "{'name' : 'execute_plan', 'class' : '" + ExecutePlanAction.class.getName() + "'}]" +
@@ -438,9 +432,8 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
     props.put("event", "indexSize");
     props.put("waitFor", waitForSeconds);
     props.put("enabled", true);
-    props.put(IndexSizeTrigger.UNIT_PROP, IndexSizeTrigger.Unit.docs.toString());
-    props.put(IndexSizeTrigger.ABOVE_PROP, 10);
-    props.put(IndexSizeTrigger.BELOW_PROP, 2);
+    props.put(IndexSizeTrigger.ABOVE_DOCS_PROP, 10);
+    props.put(IndexSizeTrigger.BELOW_DOCS_PROP, 2);
     List<Map<String, String>> actions = new ArrayList<>(3);
     Map<String, String> map = new HashMap<>(2);
     map.put("name", "compute_plan");

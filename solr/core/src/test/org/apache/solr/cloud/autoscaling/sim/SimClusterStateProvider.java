@@ -900,7 +900,12 @@ public class SimClusterStateProvider implements ClusterStateProvider {
     if (sessionWrapper != null) sessionWrapper.release();
 
     // adjust numDocs / deletedDocs / maxDoc
-    String numDocsStr = parentSlice.getLeader().getStr("SEARCHER.searcher.numDocs", "0");
+    Replica leader = parentSlice.getLeader();
+    // XXX leader election may not have happened yet - should we require it?
+    if (leader == null) {
+      leader = parentSlice.getReplicas().iterator().next();
+    }
+    String numDocsStr = leader.getStr("SEARCHER.searcher.numDocs", "0");
     long numDocs = Long.parseLong(numDocsStr);
     long newNumDocs = numDocs / subSlices.size();
     long remainder = numDocs % subSlices.size();
@@ -1004,21 +1009,22 @@ public class SimClusterStateProvider implements ClusterStateProvider {
   }
 
   /**
-   * Simulate an update by increasing replica metrics.
-   * <p>The following core metrics are updated:
+   * Simulate an update by modifying replica metrics.
+   * The following core metrics are updated:
    * <ul>
-   *   <li></li>
+   *   <li><code>SEARCHER.searcher.numDocs</code> - increased by added docs, decreased by deleteById and deleteByQuery</li>
+   *   <li><code>SEARCHER.searcher.deletedDocs</code> - decreased by deleteById and deleteByQuery by up to <code>numDocs</code></li>
+   *   <li><code>SEARCHER.searcher.maxDoc</code> - always increased by the number of added docs.</li>
    * </ul>
-   * </p>
-   * <p>IMPORTANT limitations:
+   * <p>IMPORTANT limitations:</p>
    * <ul>
    *   <li>document replacements are always counted as new docs</li>
-   *   <li>delete by ID always succeeds (unless there are 0 documents)</li>
-   *   <li>deleteByQuery never matches unless the query is <code>*:*</code></li>
-   * </ul></p>
-   * @param req
-   * @return
-   * @throws SolrException
+   *   <li>delete by ID always succeeds (unless numDocs == 0)</li>
+   *   <li>deleteByQuery is not supported unless the query is <code>*:*</code></li>
+   * </ul>
+   * @param req update request. This request MUST have the <code>collection</code> param set.
+   * @return {@link UpdateResponse}
+   * @throws SolrException on errors, such as nonexistent collection or unsupported deleteByQuery
    */
   public UpdateResponse simUpdate(UpdateRequest req) throws SolrException, InterruptedException, IOException {
     String collection = req.getCollection();
@@ -1028,7 +1034,8 @@ public class SimClusterStateProvider implements ClusterStateProvider {
     if (!simListCollections().contains(collection)) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Collection '" + collection + "' doesn't exist");
     }
-    // always reset first to get the current metrics
+    // always reset first to get the current metrics - it's easier than to keep matching
+    // Replica with ReplicaInfo where the current real counts are stored
     collectionsStatesRef.set(null);
     DocCollection coll = getClusterState().getCollection(collection);
     DocRouter router = coll.getRouter();
@@ -1041,6 +1048,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
       if (deletes != null && !deletes.isEmpty()) {
         for (String id : deletes) {
           Slice s = router.getTargetSlice(id, null, null, req.getParams(), coll);
+          // NOTE: we don't use getProperty because it uses PROPERTY_PROP_PREFIX
           String numDocsStr = s.getLeader().getStr("SEARCHER.searcher.numDocs");
           if (numDocsStr == null) {
             LOG.debug("-- no docs in " + s.getLeader());
@@ -1100,6 +1108,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
             simSetShardValue(collection, s.getName(), "SEARCHER.searcher.numDocs", 1, true, false);
             simSetShardValue(collection, s.getName(), "SEARCHER.searcher.maxDoc", 1, true, false);
             // Policy reuses this value and expects it to be in GB units!!!
+            // the idea here is to increase the index size by 500 bytes with each doc
             // simSetShardValue(collection, s.getName(), "INDEX.sizeInBytes", 500, true, false);
           } catch (Exception e) {
             throw new IOException(e);
@@ -1391,6 +1400,8 @@ public class SimClusterStateProvider implements ClusterStateProvider {
     return state;
   }
 
+  // this method uses a simple cache in collectionsStatesRef. Operations that modify
+  // cluster state should always reset this cache so that the changes become visible
   private Map<String, DocCollection> getCollectionStates() {
     Map<String, DocCollection> collectionStates = collectionsStatesRef.get();
     if (collectionStates != null) {
