@@ -1667,6 +1667,10 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
         checkNotNull(CoreAdminParams.REPLICA, replica));
   }
 
+  public static DeleteReplica deleteReplica(String collection, String shard, int count) {
+    return new DeleteReplica(collection, checkNotNull(CoreAdminParams.SHARD, shard), count);
+  }
+
   /**
    * Returns a SolrRequest to remove a number of replicas from a specific shard
    */

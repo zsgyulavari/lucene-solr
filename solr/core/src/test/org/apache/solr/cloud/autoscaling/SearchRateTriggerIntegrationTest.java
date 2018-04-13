@@ -65,6 +65,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
   private static int waitForSeconds = 1;
   private static Set<TriggerEvent> events = ConcurrentHashMap.newKeySet();
   private static Map<String, List<CapturedEvent>> listenerEvents = new HashMap<>();
+  static CountDownLatch finished = new CountDownLatch(1);
 
   @BeforeClass
   public static void setupCluster() throws Exception {
@@ -82,7 +83,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
   }
 
   @Test
-  public void testSearchRate() throws Exception {
+  public void testAboveSearchRate() throws Exception {
     CloudSolrClient solrClient = cluster.getSolrClient();
     String COLL1 = "collection1";
     CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(COLL1,
@@ -94,59 +95,76 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         "'event' : 'searchRate'," +
         "'waitFor' : '" + waitForSeconds + "s'," +
         "'enabled' : true," +
-        "'rate' : 1.0," +
+        "'collection' : '" + COLL1 + "'," +
+        "'aboveRate' : 1.0," +
+        "'belowRate' : 0.1," +
         "'actions' : [" +
         "{'name':'compute','class':'" + ComputePlanAction.class.getName() + "'}," +
-        "{'name':'execute','class':'" + ExecutePlanAction.class.getName() + "'}," +
-        "{'name':'test','class':'" + TestSearchRateAction.class.getName() + "'}" +
+        "{'name':'execute','class':'" + ExecutePlanAction.class.getName() + "'}" +
         "]" +
         "}}";
     SolrRequest req = createAutoScalingRequest(SolrRequest.METHOD.POST, setTriggerCommand);
     NamedList<Object> response = solrClient.request(req);
     assertEquals(response.get("result").toString(), "success");
 
-    String setListenerCommand1 = "{" +
+    String setListenerCommand = "{" +
         "'set-listener' : " +
         "{" +
         "'name' : 'srt'," +
         "'trigger' : 'search_rate_trigger'," +
         "'stage' : ['FAILED','SUCCEEDED']," +
-        "'afterAction': ['compute', 'execute', 'test']," +
-        "'class' : '" + TestTriggerListener.class.getName() + "'" +
+        "'afterAction': ['compute', 'execute']," +
+        "'class' : '" + CapturingTriggerListener.class.getName() + "'" +
         "}" +
         "}";
-    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand1);
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
     response = solrClient.request(req);
     assertEquals(response.get("result").toString(), "success");
+
+    setListenerCommand = "{" +
+        "'set-listener' : " +
+        "{" +
+        "'name' : 'finished'," +
+        "'trigger' : 'search_rate_trigger'," +
+        "'stage' : ['SUCCEEDED']," +
+        "'class' : '" + FinishedProcessingListener.class.getName() + "'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
+
     SolrParams query = params(CommonParams.Q, "*:*");
     for (int i = 0; i < 500; i++) {
       solrClient.query(COLL1, query);
     }
-    boolean await = triggerFiredLatch.await(20, TimeUnit.SECONDS);
+
+    boolean await = finished.await(20, TimeUnit.SECONDS);
     assertTrue("The trigger did not fire at all", await);
-    // wait for listener to capture the SUCCEEDED stage
-    Thread.sleep(5000);
+
+    timeSource.sleep(5000);
+
     List<CapturedEvent> events = listenerEvents.get("srt");
-    assertEquals(listenerEvents.toString(), 4, events.size());
+    assertEquals(listenerEvents.toString(), 3, events.size());
     assertEquals("AFTER_ACTION", events.get(0).stage.toString());
     assertEquals("compute", events.get(0).actionName);
     assertEquals("AFTER_ACTION", events.get(1).stage.toString());
     assertEquals("execute", events.get(1).actionName);
-    assertEquals("AFTER_ACTION", events.get(2).stage.toString());
-    assertEquals("test", events.get(2).actionName);
-    assertEquals("SUCCEEDED", events.get(3).stage.toString());
-    assertNull(events.get(3).actionName);
+    assertEquals("SUCCEEDED", events.get(2).stage.toString());
+    assertNull(events.get(2).actionName);
 
     CapturedEvent ev = events.get(0);
     long now = timeSource.getTimeNs();
     // verify waitFor
     assertTrue(TimeUnit.SECONDS.convert(waitForSeconds, TimeUnit.NANOSECONDS) - WAIT_FOR_DELTA_NANOS <= now - ev.event.getEventTime());
-    Map<String, Double> nodeRates = (Map<String, Double>) ev.event.getProperties().get("node");
+    Map<String, Double> nodeRates = (Map<String, Double>) ev.event.getProperties().get(SearchRateTrigger.HOT_NODES);
     assertNotNull("nodeRates", nodeRates);
     assertTrue(nodeRates.toString(), nodeRates.size() > 0);
     AtomicDouble totalNodeRate = new AtomicDouble();
     nodeRates.forEach((n, r) -> totalNodeRate.addAndGet(r));
-    List<ReplicaInfo> replicaRates = (List<ReplicaInfo>) ev.event.getProperties().get("replica");
+    List<ReplicaInfo> replicaRates = (List<ReplicaInfo>) ev.event.getProperties().get(SearchRateTrigger.HOT_REPLICAS);
     assertNotNull("replicaRates", replicaRates);
     assertTrue(replicaRates.toString(), replicaRates.size() > 0);
     AtomicDouble totalReplicaRate = new AtomicDouble();
@@ -154,7 +172,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
       assertTrue(r.toString(), r.getVariable("rate") != null);
       totalReplicaRate.addAndGet((Double) r.getVariable("rate"));
     });
-    Map<String, Object> shardRates = (Map<String, Object>) ev.event.getProperties().get("shard");
+    Map<String, Object> shardRates = (Map<String, Object>) ev.event.getProperties().get(SearchRateTrigger.HOT_SHARDS);
     assertNotNull("shardRates", shardRates);
     assertEquals(shardRates.toString(), 1, shardRates.size());
     shardRates = (Map<String, Object>) shardRates.get(COLL1);
@@ -162,7 +180,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     assertEquals(shardRates.toString(), 1, shardRates.size());
     AtomicDouble totalShardRate = new AtomicDouble();
     shardRates.forEach((s, r) -> totalShardRate.addAndGet((Double) r));
-    Map<String, Double> collectionRates = (Map<String, Double>) ev.event.getProperties().get("collection");
+    Map<String, Double> collectionRates = (Map<String, Double>) ev.event.getProperties().get(SearchRateTrigger.HOT_COLLECTIONS);
     assertNotNull("collectionRates", collectionRates);
     assertEquals(collectionRates.toString(), 1, collectionRates.size());
     Double collectionRate = collectionRates.get(COLL1);
@@ -181,27 +199,12 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     }
   }
 
-  public static class TestSearchRateAction extends TriggerActionBase {
+  @Test
+  public void testBelowSearchRate() throws Exception {
 
-    @Override
-    public void process(TriggerEvent event, ActionContext context) throws Exception {
-      try {
-        events.add(event);
-        long currentTimeNanos = timeSource.getTimeNs();
-        long eventTimeNanos = event.getEventTime();
-        long waitForNanos = TimeUnit.NANOSECONDS.convert(waitForSeconds, TimeUnit.SECONDS) - WAIT_FOR_DELTA_NANOS;
-        if (currentTimeNanos - eventTimeNanos <= waitForNanos) {
-          fail(event.source + " was fired before the configured waitFor period");
-        }
-        triggerFiredLatch.countDown();
-      } catch (Throwable t) {
-        log.debug("--throwable", t);
-        throw t;
-      }
-    }
   }
 
-  public static class TestTriggerListener extends TriggerListenerBase {
+  public static class CapturingTriggerListener extends TriggerListenerBase {
     @Override
     public void configure(SolrResourceLoader loader, SolrCloudManager cloudManager, AutoScalingConfig.TriggerListenerConfig config) throws TriggerValidationException {
       super.configure(loader, cloudManager, config);
@@ -212,7 +215,18 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     public synchronized void onEvent(TriggerEvent event, TriggerEventProcessorStage stage, String actionName,
                                      ActionContext context, Throwable error, String message) {
       List<CapturedEvent> lst = listenerEvents.computeIfAbsent(config.name, s -> new ArrayList<>());
-      lst.add(new CapturedEvent(timeSource.getTimeNs(), context, config, stage, actionName, event, message));
+      CapturedEvent ev = new CapturedEvent(timeSource.getTimeNs(), context, config, stage, actionName, event, message);
+      log.info("=======> " + ev);
+      lst.add(ev);
     }
   }
+
+  public static class FinishedProcessingListener extends TriggerListenerBase {
+
+    @Override
+    public void onEvent(TriggerEvent event, TriggerEventProcessorStage stage, String actionName, ActionContext context, Throwable error, String message) throws Exception {
+      finished.countDown();
+    }
+  }
+
 }

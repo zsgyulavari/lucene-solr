@@ -24,8 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 
 import com.google.common.util.concurrent.AtomicDouble;
 import org.apache.solr.client.solrj.cloud.autoscaling.Policy;
@@ -34,6 +34,7 @@ import org.apache.solr.client.solrj.cloud.SolrCloudManager;
 import org.apache.solr.client.solrj.cloud.autoscaling.Suggester;
 import org.apache.solr.client.solrj.cloud.autoscaling.TriggerEventType;
 import org.apache.solr.common.SolrException;
+import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.params.AutoScalingParams;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.util.Pair;
@@ -49,11 +50,29 @@ import org.slf4j.LoggerFactory;
 public class SearchRateTrigger extends TriggerBase {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+  public static final String ABOVE_RATE_PROP = "aboveRate";
+  public static final String BELOW_RATE_PROP = "belowRate";
+  public static final String ABOVE_OP_PROP = "aboveOp";
+  public static final String BELOW_OP_PROP = "belowOp";
+  public static final String ABOVE_NODE_OP_PROP = "aboveNodeOp";
+  public static final String BELOW_NODE_OP_PROP = "belowNodeOp";
+
+  public static final String HOT_NODES = "hotNodes";
+  public static final String HOT_COLLECTIONS = "hotCollections";
+  public static final String HOT_SHARDS = "hotShards";
+  public static final String HOT_REPLICAS = "hotReplicas";
+  public static final String COLD_NODES = "coldNodes";
+  public static final String COLD_COLLECTIONS = "coldCollections";
+  public static final String COLD_SHARDS = "coldShards";
+  public static final String COLD_REPLICAS = "coldReplicas";
+
   private String handler;
   private String collection;
   private String shard;
   private String node;
-  private double rate;
+  private double aboveRate;
+  private double belowRate;
+  private CollectionParams.CollectionAction aboveOp, belowOp, aboveNodeOp, belowNodeOp;
   private final Map<String, Long> lastCollectionEvent = new ConcurrentHashMap<>();
   private final Map<String, Long> lastNodeEvent = new ConcurrentHashMap<>();
   private final Map<String, Long> lastShardEvent = new ConcurrentHashMap<>();
@@ -66,7 +85,10 @@ public class SearchRateTrigger extends TriggerBase {
     this.state.put("lastNodeEvent", lastNodeEvent);
     this.state.put("lastShardEvent", lastShardEvent);
     this.state.put("lastReplicaEvent", lastReplicaEvent);
-    TriggerUtils.requiredProperties(requiredProperties, validProperties, "rate");
+    TriggerUtils.requiredProperties(requiredProperties, validProperties);
+    TriggerUtils.validProperties(validProperties,
+        AutoScalingParams.COLLECTION, AutoScalingParams.SHARD, AutoScalingParams.NODE,
+        AutoScalingParams.HANDLER, ABOVE_RATE_PROP, BELOW_RATE_PROP);
   }
 
   @Override
@@ -76,16 +98,55 @@ public class SearchRateTrigger extends TriggerBase {
     collection = (String)properties.getOrDefault(AutoScalingParams.COLLECTION, Policy.ANY);
     shard = (String)properties.getOrDefault(AutoScalingParams.SHARD, Policy.ANY);
     if (collection.equals(Policy.ANY) && !shard.equals(Policy.ANY)) {
-      throw new TriggerValidationException("shard", "When 'shard' is other than #ANY then collection name must be also other than #ANY");
+      throw new TriggerValidationException(name, AutoScalingParams.SHARD, "When 'shard' is other than #ANY then collection name must be also other than #ANY");
     }
     node = (String)properties.getOrDefault(AutoScalingParams.NODE, Policy.ANY);
     handler = (String)properties.getOrDefault(AutoScalingParams.HANDLER, "/select");
 
-    String rateString = String.valueOf(properties.get("rate"));
-    try {
-      rate = Double.parseDouble(rateString);
-    } catch (Exception e) {
-      throw new TriggerValidationException(name, "rate", "Invalid 'rate' configuration value: '" + rateString + "': " + e.toString());
+    Object above = properties.get(ABOVE_RATE_PROP);
+    Object below = properties.get(BELOW_RATE_PROP);
+    if (above == null && below == null) {
+      throw new TriggerValidationException(name, ABOVE_RATE_PROP, "at least one of '" +
+      ABOVE_RATE_PROP + "' or '" + BELOW_RATE_PROP + "' must be set");
+    }
+    if (above != null) {
+      try {
+        aboveRate = Double.parseDouble(String.valueOf(above));
+      } catch (Exception e) {
+        throw new TriggerValidationException(name, ABOVE_RATE_PROP, "Invalid configuration value: '" + above + "': " + e.toString());
+      }
+    } else {
+      aboveRate = Double.MAX_VALUE;
+    }
+    if (below != null) {
+      try {
+        belowRate = Double.parseDouble(String.valueOf(below));
+      } catch (Exception e) {
+        throw new TriggerValidationException(name, BELOW_RATE_PROP, "Invalid configuration value: '" + below + "': " + e.toString());
+      }
+    } else {
+      belowRate = -1;
+    }
+
+    String aboveOpStr = String.valueOf(properties.getOrDefault(ABOVE_OP_PROP, CollectionParams.CollectionAction.ADDREPLICA.toLower()));
+    String belowOpStr = String.valueOf(properties.getOrDefault(BELOW_OP_PROP, CollectionParams.CollectionAction.DELETEREPLICA.toLower()));
+    aboveOp = CollectionParams.CollectionAction.get(aboveOpStr);
+    if (aboveOp == null) {
+      throw new TriggerValidationException(getName(), ABOVE_OP_PROP, "unrecognized value: '" + aboveOpStr + "'");
+    }
+    belowOp = CollectionParams.CollectionAction.get(belowOpStr);
+    if (belowOp == null) {
+      throw new TriggerValidationException(getName(), BELOW_OP_PROP, "unrecognized value: '" + belowOpStr + "'");
+    }
+    aboveOpStr = String.valueOf(properties.getOrDefault(ABOVE_NODE_OP_PROP, CollectionParams.CollectionAction.MOVEREPLICA.toLower()));
+    belowOpStr = String.valueOf(properties.getOrDefault(BELOW_NODE_OP_PROP, CollectionParams.CollectionAction.DELETENODE.toLower()));
+    aboveNodeOp = CollectionParams.CollectionAction.get(aboveOpStr);
+    if (aboveNodeOp == null) {
+      throw new TriggerValidationException(getName(), ABOVE_NODE_OP_PROP, "unrecognized value: '" + aboveOpStr + "'");
+    }
+    belowNodeOp = CollectionParams.CollectionAction.get(belowOpStr);
+    if (belowNodeOp == null) {
+      throw new TriggerValidationException(getName(), BELOW_NODE_OP_PROP, "unrecognized value: '" + belowOpStr + "'");
     }
   }
 
@@ -146,18 +207,31 @@ public class SearchRateTrigger extends TriggerBase {
       return;
     }
 
+    // collection, shard, list(replica + rate)
     Map<String, Map<String, List<ReplicaInfo>>> collectionRates = new HashMap<>();
+    // node, rate
     Map<String, AtomicDouble> nodeRates = new HashMap<>();
-    Map<String, Integer> replicationFactors = new HashMap<>();
+    // this replication factor only considers replica types that are searchable
+    // collection, shard, RF
+    Map<String, Map<String, AtomicInteger>> searchableReplicationFactors = new HashMap<>();
 
     for (String node : cloudManager.getClusterStateProvider().getLiveNodes()) {
       Map<String, ReplicaInfo> metricTags = new HashMap<>();
       // coll, shard, replica
       Map<String, Map<String, List<ReplicaInfo>>> infos = cloudManager.getNodeStateProvider().getReplicaInfo(node, Collections.emptyList());
       infos.forEach((coll, shards) -> {
-        replicationFactors.computeIfAbsent(coll, c -> shards.size());
+        Map<String, AtomicInteger> replPerShard = searchableReplicationFactors.computeIfAbsent(coll, c -> new HashMap<>());
         shards.forEach((sh, replicas) -> {
+          AtomicInteger repl = replPerShard.computeIfAbsent(sh, s -> new AtomicInteger());
           replicas.forEach(replica -> {
+            // skip PULL and non-active replicas
+            if (replica.getType().equals(Replica.Type.PULL)) {
+              return;
+            }
+            if (replica.getState() != Replica.State.ACTIVE) {
+              return;
+            }
+            repl.incrementAndGet();
             // we have to translate to the metrics registry name, which uses "_replica_nN" as suffix
             String replicaName = Utils.parseMetricsReplicaName(coll, replica.getCore());
             if (replicaName == null) { // should never happen???
@@ -191,48 +265,74 @@ public class SearchRateTrigger extends TriggerBase {
     }
 
     long now = cloudManager.getTimeSource().getTimeNs();
+    Map<String, Double> hotNodes = new HashMap<>();
+    Map<String, Double> coldNodes = new HashMap<>();
     // check for exceeded rates and filter out those with less than waitFor from previous events
-    Map<String, Double> hotNodes = nodeRates.entrySet().stream()
+    nodeRates.entrySet().stream()
         .filter(entry -> node.equals(Policy.ANY) || node.equals(entry.getKey()))
         .filter(entry -> waitForElapsed(entry.getKey(), now, lastNodeEvent))
-        .filter(entry -> entry.getValue().get() > rate)
-        .collect(Collectors.toMap(entry -> entry.getKey(), entry -> entry.getValue().get()));
+        .forEach(entry -> {
+          if (entry.getValue().get() > aboveRate) {
+            hotNodes.put(entry.getKey(), entry.getValue().get());
+          } else if (entry.getValue().get() < belowRate) {
+            coldNodes.put(entry.getKey(), entry.getValue().get());
+          }
+        });
 
     Map<String, Map<String, Double>> hotShards = new HashMap<>();
+    Map<String, Map<String, Double>> coldShards = new HashMap<>();
     List<ReplicaInfo> hotReplicas = new ArrayList<>();
+    List<ReplicaInfo> coldReplicas = new ArrayList<>();
     collectionRates.forEach((coll, shardRates) -> {
       shardRates.forEach((sh, replicaRates) -> {
         double shardRate = replicaRates.stream()
             .map(r -> {
-              if (waitForElapsed(r.getCollection() + "." + r.getCore(), now, lastReplicaEvent) &&
-                  ((Double)r.getVariable(AutoScalingParams.RATE) > rate)) {
-                hotReplicas.add(r);
+              if (waitForElapsed(r.getCollection() + "." + r.getCore(), now, lastReplicaEvent)) {
+                if (((Double)r.getVariable(AutoScalingParams.RATE) > aboveRate)) {
+                  hotReplicas.add(r);
+                } else if (((Double)r.getVariable(AutoScalingParams.RATE) < belowRate)) {
+                  coldReplicas.add(r);
+                }
               }
               return r;
             })
             .mapToDouble(r -> (Double)r.getVariable(AutoScalingParams.RATE)).sum();
         if (waitForElapsed(coll + "." + sh, now, lastShardEvent) &&
-            (shardRate > rate) &&
             (collection.equals(Policy.ANY) || collection.equals(coll)) &&
             (shard.equals(Policy.ANY) || shard.equals(sh))) {
-          hotShards.computeIfAbsent(coll, s -> new HashMap<>()).put(sh, shardRate);
+          if (shardRate > aboveRate) {
+            hotShards.computeIfAbsent(coll, s -> new HashMap<>()).put(sh, shardRate);
+          } else if (shardRate < belowRate) {
+            coldShards.computeIfAbsent(coll, s -> new HashMap<>()).put(sh, shardRate);
+          }
         }
       });
     });
 
     Map<String, Double> hotCollections = new HashMap<>();
+    Map<String, Double> coldCollections = new HashMap<>();
     collectionRates.forEach((coll, shardRates) -> {
       double total = shardRates.entrySet().stream()
           .mapToDouble(e -> e.getValue().stream()
               .mapToDouble(r -> (Double)r.getVariable(AutoScalingParams.RATE)).sum()).sum();
       if (waitForElapsed(coll, now, lastCollectionEvent) &&
-          (total > rate) &&
           (collection.equals(Policy.ANY) || collection.equals(coll))) {
-        hotCollections.put(coll, total);
+        if (total > aboveRate) {
+          hotCollections.put(coll, total);
+        } else if (total < belowRate) {
+          coldCollections.put(coll, total);
+        }
       }
     });
 
-    if (hotCollections.isEmpty() && hotShards.isEmpty() && hotReplicas.isEmpty() && hotNodes.isEmpty()) {
+    if (hotCollections.isEmpty() &&
+        hotShards.isEmpty() &&
+        hotReplicas.isEmpty() &&
+        hotNodes.isEmpty() &&
+        coldCollections.isEmpty() &&
+        coldShards.isEmpty() &&
+        coldReplicas.isEmpty() &&
+        coldNodes.isEmpty()) {
       return;
     }
 
@@ -246,7 +346,21 @@ public class SearchRateTrigger extends TriggerBase {
         eventTime.set(time);
       }
     });
+    coldCollections.forEach((c, r) -> {
+      long time = lastCollectionEvent.get(c);
+      if (eventTime.get() > time) {
+        eventTime.set(time);
+      }
+    });
     hotShards.forEach((c, shards) -> {
+      shards.forEach((s, r) -> {
+        long time = lastShardEvent.get(c + "." + s);
+        if (eventTime.get() > time) {
+          eventTime.set(time);
+        }
+      });
+    });
+    coldShards.forEach((c, shards) -> {
       shards.forEach((s, r) -> {
         long time = lastShardEvent.get(c + "." + s);
         if (eventTime.get() > time) {
@@ -260,20 +374,66 @@ public class SearchRateTrigger extends TriggerBase {
         eventTime.set(time);
       }
     });
+    coldReplicas.forEach(r -> {
+      long time = lastReplicaEvent.get(r.getCollection() + "." + r.getCore());
+      if (eventTime.get() > time) {
+        eventTime.set(time);
+      }
+    });
     hotNodes.forEach((n, r) -> {
       long time = lastNodeEvent.get(n);
       if (eventTime.get() > time) {
         eventTime.set(time);
       }
     });
+    coldNodes.forEach((n, r) -> {
+      long time = lastNodeEvent.get(n);
+      if (eventTime.get() > time) {
+        eventTime.set(time);
+      }
+    });
 
+    final List<TriggerEvent.Op> ops = new ArrayList<>();
+
+    calculateHotOps(ops, searchableReplicationFactors, hotNodes, hotCollections, hotShards, hotReplicas);
+    calculateColdOps(ops, searchableReplicationFactors, coldNodes, coldCollections, coldShards, coldReplicas);
+
+    if (ops.isEmpty()) {
+      return;
+    }
+
+    if (processor.process(new SearchRateEvent(getName(), eventTime.get(), ops,
+        hotNodes, hotCollections, hotShards, hotReplicas,
+        coldNodes, coldCollections, coldShards, coldReplicas))) {
+      // update lastEvent times
+      hotNodes.keySet().forEach(node -> lastNodeEvent.put(node, now));
+      coldNodes.keySet().forEach(node -> lastNodeEvent.put(node, now));
+      hotCollections.keySet().forEach(coll -> lastCollectionEvent.put(coll, now));
+      coldCollections.keySet().forEach(coll -> lastCollectionEvent.put(coll, now));
+      hotShards.entrySet().forEach(e -> e.getValue()
+          .forEach((sh, rate) -> lastShardEvent.put(e.getKey() + "." + sh, now)));
+      coldShards.entrySet().forEach(e -> e.getValue()
+          .forEach((sh, rate) -> lastShardEvent.put(e.getKey() + "." + sh, now)));
+      hotReplicas.forEach(r -> lastReplicaEvent.put(r.getCollection() + "." + r.getCore(), now));
+      coldReplicas.forEach(r -> lastReplicaEvent.put(r.getCollection() + "." + r.getCore(), now));
+    }
+  }
+
+  private void calculateHotOps(List<TriggerEvent.Op> ops,
+                               Map<String, Map<String, AtomicInteger>> searchableReplicationFactors,
+                               Map<String, Double> hotNodes,
+                               Map<String, Double> hotCollections,
+                               Map<String, Map<String, Double>> hotShards,
+                               List<ReplicaInfo> hotReplicas) {
     // calculate the number of replicas to add to each hot shard, based on how much the rate was
     // exceeded - but within limits.
-    final List<TriggerEvent.Op> ops = new ArrayList<>();
-    if (hotShards.isEmpty() && hotCollections.isEmpty() && hotReplicas.isEmpty()) {
+
+    // first resolve a situation when only a node is hot but no collection / shard / replica is hot
+    // TODO: eventually we may want to commission a new node
+    if (!hotNodes.isEmpty() && hotShards.isEmpty() && hotCollections.isEmpty() && hotReplicas.isEmpty()) {
       // move replicas around
       hotNodes.forEach((n, r) -> {
-        ops.add(new TriggerEvent.Op(CollectionParams.CollectionAction.MOVEREPLICA, Suggester.Hint.SRC_NODE, n));
+        ops.add(new TriggerEvent.Op(aboveNodeOp, Suggester.Hint.SRC_NODE, n));
       });
     } else {
       // add replicas
@@ -283,7 +443,7 @@ public class SearchRateTrigger extends TriggerBase {
         List<Pair<String, String>> perShard = hints
             .computeIfAbsent(coll, c -> new HashMap<>())
             .computeIfAbsent(s, sh -> new ArrayList<>());
-        addHints(coll, s, r, replicationFactors.get(coll), perShard);
+        addReplicaHints(coll, s, r, searchableReplicationFactors.get(coll).get(s).get(), perShard);
       }));
       hotReplicas.forEach(ri -> {
         double r = (Double)ri.getVariable(AutoScalingParams.RATE);
@@ -292,36 +452,92 @@ public class SearchRateTrigger extends TriggerBase {
             .computeIfAbsent(ri.getCollection(), c -> new HashMap<>())
             .computeIfAbsent(ri.getShard(), sh -> new ArrayList<>());
         if (perShard.isEmpty()) {
-          addHints(ri.getCollection(), ri.getShard(), r, replicationFactors.get(ri.getCollection()), perShard);
+          addReplicaHints(ri.getCollection(), ri.getShard(), r, searchableReplicationFactors.get(ri.getCollection()).get(ri.getShard()).get(), perShard);
         }
       });
 
       hints.values().forEach(m -> m.values().forEach(lst -> lst.forEach(p -> {
-        ops.add(new TriggerEvent.Op(CollectionParams.CollectionAction.ADDREPLICA, Suggester.Hint.COLL_SHARD, p));
+        ops.add(new TriggerEvent.Op(aboveOp, Suggester.Hint.COLL_SHARD, p));
       })));
     }
 
-    if (processor.process(new SearchRateEvent(getName(), eventTime.get(), ops, hotNodes, hotCollections, hotShards, hotReplicas))) {
-      // update lastEvent times
-      hotNodes.keySet().forEach(node -> lastNodeEvent.put(node, now));
-      hotCollections.keySet().forEach(coll -> lastCollectionEvent.put(coll, now));
-      hotShards.entrySet().forEach(e -> e.getValue()
-          .forEach((sh, rate) -> lastShardEvent.put(e.getKey() + "." + sh, now)));
-      hotReplicas.forEach(r -> lastReplicaEvent.put(r.getCollection() + "." + r.getCore(), now));
-    }
   }
 
-  private void addHints(String collection, String shard, double r, int replicationFactor, List<Pair<String, String>> hints) {
-    int numReplicas = (int)Math.round((r - rate) / (double) replicationFactor);
+  /**
+   * This method implements a primitive form of proportional controller with a limiter.
+   */
+  private void addReplicaHints(String collection, String shard, double r, int replicationFactor, List<Pair<String, String>> hints) {
+    int numReplicas = (int)Math.round((r - aboveRate) / (double) replicationFactor);
+    // in one event add at least 1 replica
     if (numReplicas < 1) {
       numReplicas = 1;
     }
+    // ... and at most 3 replicas
     if (numReplicas > 3) {
       numReplicas = 3;
     }
     for (int i = 0; i < numReplicas; i++) {
       hints.add(new Pair(collection, shard));
     }
+  }
+
+  private void calculateColdOps(List<TriggerEvent.Op> ops,
+                                Map<String, Map<String, AtomicInteger>> searchableReplicationFactors,
+                                Map<String, Double> coldNodes,
+                                Map<String, Double> coldCollections,
+                                Map<String, Map<String, Double>> coldShards,
+                                List<ReplicaInfo> coldReplicas) {
+    // COLD NODES:
+    // Unlike in case of hot nodes, if a node is cold then any monitored
+    // collections / shards / replicas located on that node are cold, too.
+    // HOWEVER, we check only non-pull replicas and only from selected collections / shards,
+    // so deleting a cold node is dangerous because it may interfere with these
+    // non-monitored resources
+    /*
+    coldNodes.forEach((node, rate) -> {
+      ops.add(new TriggerEvent.Op(belowNodeOp, Suggester.Hint.SRC_NODE, node));
+    });
+    */
+
+    // COLD COLLECTIONS
+    // Probably can't do anything reasonable about whole cold collections
+    // because they may be needed even if not used.
+
+    // COLD SHARDS:
+    // Cold shards mean that there are too many replicas per shard - but it also
+    // means that all replicas in these shards are cold too, so we can simply
+    // address this by deleting cold replicas
+
+    // COLD REPLICAS:
+    // Remove cold replicas but only when there's at least one more searchable replica
+    // still available (additional non-searchable replicas may exist, too)
+    Map<String, Map<String, List<ReplicaInfo>>> byCollectionByShard = new HashMap<>();
+    coldReplicas.forEach(ri -> {
+      byCollectionByShard.computeIfAbsent(ri.getCollection(), c -> new HashMap<>())
+          .computeIfAbsent(ri.getShard(), s -> new ArrayList<>())
+          .add(ri);
+    });
+    byCollectionByShard.forEach((coll, shards) -> {
+      shards.forEach((shard, replicas) -> {
+        // only delete if there's at least one searchable replica left
+        // again, use a simple proportional controller with a limiter
+        int rf = searchableReplicationFactors.get(coll).get(shard).get();
+        if (rf > replicas.size()) {
+          // delete at most 3 replicas at a time
+          AtomicInteger limit = new AtomicInteger(3);
+          replicas.forEach(ri -> {
+            if (limit.get() == 0) {
+              return;
+            }
+            TriggerEvent.Op op = new TriggerEvent.Op(belowOp,
+                Suggester.Hint.COLL_SHARD, new Pair<>(ri.getCollection(), ri.getShard()));
+            op.addHint(Suggester.Hint.REPLICA, ri.getName());
+            ops.add(op);
+            limit.decrementAndGet();
+          });
+        }
+      });
+    });
   }
 
   private boolean waitForElapsed(String name, long now, Map<String, Long> lastEventMap) {
@@ -335,15 +551,25 @@ public class SearchRateTrigger extends TriggerBase {
   }
 
   public static class SearchRateEvent extends TriggerEvent {
-    public SearchRateEvent(String source, long eventTime, List<Op> ops, Map<String, Double> hotNodes,
+    public SearchRateEvent(String source, long eventTime, List<Op> ops,
+                           Map<String, Double> hotNodes,
                            Map<String, Double> hotCollections,
-                           Map<String, Map<String, Double>> hotShards, List<ReplicaInfo> hotReplicas) {
+                           Map<String, Map<String, Double>> hotShards,
+                           List<ReplicaInfo> hotReplicas,
+                           Map<String, Double> coldNodes,
+                           Map<String, Double> coldCollections,
+                           Map<String, Map<String, Double>> coldShards,
+                           List<ReplicaInfo> coldReplicas) {
       super(TriggerEventType.SEARCHRATE, source, eventTime, null);
       properties.put(TriggerEvent.REQUESTED_OPS, ops);
-      properties.put(AutoScalingParams.COLLECTION, hotCollections);
-      properties.put(AutoScalingParams.SHARD, hotShards);
-      properties.put(AutoScalingParams.REPLICA, hotReplicas);
-      properties.put(AutoScalingParams.NODE, hotNodes);
+      properties.put(HOT_NODES, hotNodes);
+      properties.put(HOT_COLLECTIONS, hotCollections);
+      properties.put(HOT_SHARDS, hotShards);
+      properties.put(HOT_REPLICAS, hotReplicas);
+      properties.put(COLD_NODES, coldNodes);
+      properties.put(COLD_COLLECTIONS, coldCollections);
+      properties.put(COLD_SHARDS, coldShards);
+      properties.put(COLD_REPLICAS, coldReplicas);
     }
   }
 }

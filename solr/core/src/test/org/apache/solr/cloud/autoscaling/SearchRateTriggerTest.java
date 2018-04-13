@@ -79,7 +79,7 @@ public class SearchRateTriggerTest extends SolrCloudTestCase {
     SolrCloudManager cloudManager = new SolrClientCloudManager(new ZkDistributedQueueFactory(zkClient), cluster.getSolrClient());
     URL baseUrl = cluster.getJettySolrRunners().get(1).getBaseUrl();
     long waitForSeconds = 5 + random().nextInt(5);
-    Map<String, Object> props = createTriggerProps(waitForSeconds, rate);
+    Map<String, Object> props = createTriggerProps(waitForSeconds, rate, -1);
     final List<TriggerEvent> events = new ArrayList<>();
     CloudSolrClient solrClient = cluster.getSolrClient();
 
@@ -107,7 +107,7 @@ public class SearchRateTriggerTest extends SolrCloudTestCase {
         assertEquals(1, events.size());
         TriggerEvent event = events.get(0);
         assertEquals(TriggerEventType.SEARCHRATE, event.eventType);
-        List<ReplicaInfo> infos = (List<ReplicaInfo>)event.getProperty(AutoScalingParams.REPLICA);
+        List<ReplicaInfo> infos = (List<ReplicaInfo>)event.getProperty(SearchRateTrigger.HOT_REPLICAS);
         assertEquals(1, infos.size());
         ReplicaInfo info = infos.get(0);
         assertEquals(coreName, info.getCore());
@@ -125,7 +125,7 @@ public class SearchRateTriggerTest extends SolrCloudTestCase {
       // should generate collection event
       assertEquals(1, events.size());
       TriggerEvent event = events.get(0);
-      Map<String, Double> hotCollections = (Map<String, Double>)event.getProperty(AutoScalingParams.COLLECTION);
+      Map<String, Double> hotCollections = (Map<String, Double>)event.getProperty(SearchRateTrigger.HOT_COLLECTIONS);
       assertEquals(1, hotCollections.size());
       Double Rate = hotCollections.get(COLL1);
       assertNotNull(Rate);
@@ -140,10 +140,10 @@ public class SearchRateTriggerTest extends SolrCloudTestCase {
       // should generate node and collection event but not for COLL2 because of waitFor
       assertEquals(1, events.size());
       event = events.get(0);
-      Map<String, Double> hotNodes = (Map<String, Double>)event.getProperty(AutoScalingParams.NODE);
+      Map<String, Double> hotNodes = (Map<String, Double>)event.getProperty(SearchRateTrigger.HOT_NODES);
       assertEquals(3, hotNodes.size());
       hotNodes.forEach((n, r) -> assertTrue(n, r > rate));
-      hotCollections = (Map<String, Double>)event.getProperty(AutoScalingParams.COLLECTION);
+      hotCollections = (Map<String, Double>)event.getProperty(SearchRateTrigger.HOT_COLLECTIONS);
       assertEquals(2, hotCollections.size());
       Rate = hotCollections.get(COLL1);
       assertNotNull(Rate);
@@ -160,21 +160,22 @@ public class SearchRateTriggerTest extends SolrCloudTestCase {
       trigger.run();
       // should generate node and collection event
       assertEquals(1, events.size());
-      hotCollections = (Map<String, Double>)event.getProperty(AutoScalingParams.COLLECTION);
+      hotCollections = (Map<String, Double>)event.getProperty(SearchRateTrigger.HOT_COLLECTIONS);
       assertEquals(2, hotCollections.size());
       Rate = hotCollections.get(COLL1);
       assertNotNull(Rate);
       Rate = hotCollections.get(COLL2);
       assertNotNull(Rate);
-      hotNodes = (Map<String, Double>)event.getProperty(AutoScalingParams.NODE);
+      hotNodes = (Map<String, Double>)event.getProperty(SearchRateTrigger.HOT_NODES);
       assertEquals(3, hotNodes.size());
       hotNodes.forEach((n, r) -> assertTrue(n, r > rate));
     }
   }
 
-  private Map<String, Object> createTriggerProps(long waitForSeconds, double rate) {
+  private Map<String, Object> createTriggerProps(long waitForSeconds, double aboveRate, double belowRate) {
     Map<String, Object> props = new HashMap<>();
-    props.put("rate", rate);
+    props.put("aboveRate", aboveRate);
+    props.put("belowRate", belowRate);
     props.put("event", "searchRate");
     props.put("waitFor", waitForSeconds);
     props.put("enabled", true);
