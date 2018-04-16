@@ -16,6 +16,7 @@
  */
 package org.apache.solr.cloud.autoscaling;
 
+import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -34,7 +35,9 @@ import org.apache.solr.client.solrj.cloud.SolrCloudManager;
 import org.apache.solr.client.solrj.cloud.autoscaling.Suggester;
 import org.apache.solr.client.solrj.cloud.autoscaling.TriggerEventType;
 import org.apache.solr.common.SolrException;
+import org.apache.solr.common.cloud.ClusterState;
 import org.apache.solr.common.cloud.Replica;
+import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.AutoScalingParams;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.util.Pair;
@@ -50,6 +53,9 @@ import org.slf4j.LoggerFactory;
 public class SearchRateTrigger extends TriggerBase {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+  public static final String METRIC_PROP = "metric";
+  public static final String MAX_OPS_PROP = "maxOps";
+  public static final String MIN_REPLICAS_PROP = "minReplicas";
   public static final String ABOVE_RATE_PROP = "aboveRate";
   public static final String BELOW_RATE_PROP = "belowRate";
   public static final String ABOVE_OP_PROP = "aboveOp";
@@ -66,7 +72,12 @@ public class SearchRateTrigger extends TriggerBase {
   public static final String COLD_SHARDS = "coldShards";
   public static final String COLD_REPLICAS = "coldReplicas";
 
-  private String handler;
+  public static final int DEFAULT_MAX_OPS = 3;
+  public static final String DEFAULT_METRIC = "QUERY./select.requestTimes:1minRate";
+
+  private String metric;
+  private int maxOps;
+  private Integer minReplicas = null;
   private String collection;
   private String shard;
   private String node;
@@ -85,10 +96,17 @@ public class SearchRateTrigger extends TriggerBase {
     this.state.put("lastNodeEvent", lastNodeEvent);
     this.state.put("lastShardEvent", lastShardEvent);
     this.state.put("lastReplicaEvent", lastReplicaEvent);
-    TriggerUtils.requiredProperties(requiredProperties, validProperties);
     TriggerUtils.validProperties(validProperties,
         AutoScalingParams.COLLECTION, AutoScalingParams.SHARD, AutoScalingParams.NODE,
-        AutoScalingParams.HANDLER, ABOVE_RATE_PROP, BELOW_RATE_PROP);
+        METRIC_PROP,
+        MAX_OPS_PROP,
+        MIN_REPLICAS_PROP,
+        ABOVE_OP_PROP,
+        BELOW_OP_PROP,
+        ABOVE_NODE_OP_PROP,
+        BELOW_NODE_OP_PROP,
+        ABOVE_RATE_PROP,
+        BELOW_RATE_PROP);
   }
 
   @Override
@@ -101,7 +119,23 @@ public class SearchRateTrigger extends TriggerBase {
       throw new TriggerValidationException(name, AutoScalingParams.SHARD, "When 'shard' is other than #ANY then collection name must be also other than #ANY");
     }
     node = (String)properties.getOrDefault(AutoScalingParams.NODE, Policy.ANY);
-    handler = (String)properties.getOrDefault(AutoScalingParams.HANDLER, "/select");
+    metric = (String)properties.getOrDefault(METRIC_PROP, DEFAULT_METRIC);
+
+    String maxOpsStr = String.valueOf(properties.getOrDefault(MAX_OPS_PROP, DEFAULT_MAX_OPS));
+    try {
+      maxOps = Integer.parseInt(maxOpsStr);
+    } catch (Exception e) {
+      throw new TriggerValidationException(name, MAX_OPS_PROP, "invalid value '" + maxOpsStr + "': " + e.toString());
+    }
+
+    Object o = properties.get(MIN_REPLICAS_PROP);
+    if (o != null) {
+      try {
+        minReplicas = Integer.parseInt(o.toString());
+      } catch (Exception e) {
+        throw new TriggerValidationException(name, MIN_REPLICAS_PROP, "invalid value '" + o + "': " + e.toString());
+      }
+    }
 
     Object above = properties.get(ABOVE_RATE_PROP);
     Object below = properties.get(BELOW_RATE_PROP);
@@ -138,15 +172,21 @@ public class SearchRateTrigger extends TriggerBase {
     if (belowOp == null) {
       throw new TriggerValidationException(getName(), BELOW_OP_PROP, "unrecognized value: '" + belowOpStr + "'");
     }
-    aboveOpStr = String.valueOf(properties.getOrDefault(ABOVE_NODE_OP_PROP, CollectionParams.CollectionAction.MOVEREPLICA.toLower()));
-    belowOpStr = String.valueOf(properties.getOrDefault(BELOW_NODE_OP_PROP, CollectionParams.CollectionAction.DELETENODE.toLower()));
-    aboveNodeOp = CollectionParams.CollectionAction.get(aboveOpStr);
-    if (aboveNodeOp == null) {
-      throw new TriggerValidationException(getName(), ABOVE_NODE_OP_PROP, "unrecognized value: '" + aboveOpStr + "'");
+    Object aboveNodeObj = properties.get(ABOVE_NODE_OP_PROP);
+    Object belowNodeObj = properties.get(BELOW_NODE_OP_PROP);
+    if (aboveNodeObj != null) {
+      try {
+        aboveNodeOp = CollectionParams.CollectionAction.get(String.valueOf(aboveNodeObj));
+      } catch (Exception e) {
+        throw new TriggerValidationException(getName(), ABOVE_NODE_OP_PROP, "unrecognized value: '" + aboveNodeObj + "'");
+      }
     }
-    belowNodeOp = CollectionParams.CollectionAction.get(belowOpStr);
-    if (belowNodeOp == null) {
-      throw new TriggerValidationException(getName(), BELOW_NODE_OP_PROP, "unrecognized value: '" + belowOpStr + "'");
+    if (belowNodeObj != null) {
+      try {
+        belowNodeOp = CollectionParams.CollectionAction.get(String.valueOf(belowNodeObj));
+      } catch (Exception e) {
+        throw new TriggerValidationException(getName(), BELOW_NODE_OP_PROP, "unrecognized value: '" + belowNodeObj + "'");
+      }
     }
   }
 
@@ -215,6 +255,13 @@ public class SearchRateTrigger extends TriggerBase {
     // collection, shard, RF
     Map<String, Map<String, AtomicInteger>> searchableReplicationFactors = new HashMap<>();
 
+    ClusterState clusterState = null;
+    try {
+      clusterState = cloudManager.getClusterStateProvider().getClusterState();
+    } catch (IOException e) {
+      log.warn("Error getting ClusterState", e);
+      return;
+    }
     for (String node : cloudManager.getClusterStateProvider().getLiveNodes()) {
       Map<String, ReplicaInfo> metricTags = new HashMap<>();
       // coll, shard, replica
@@ -238,8 +285,7 @@ public class SearchRateTrigger extends TriggerBase {
               replicaName = replica.getName(); // which is actually coreNode name...
             }
             String registry = SolrCoreMetricManager.createRegistryName(true, coll, sh, replicaName, null);
-            String tag = "metrics:" + registry
-                + ":QUERY." + handler + ".requestTimes:1minRate";
+            String tag = "metrics:" + registry + ":" + metric;
             metricTags.put(tag, replica);
           });
         });
@@ -396,7 +442,7 @@ public class SearchRateTrigger extends TriggerBase {
     final List<TriggerEvent.Op> ops = new ArrayList<>();
 
     calculateHotOps(ops, searchableReplicationFactors, hotNodes, hotCollections, hotShards, hotReplicas);
-    calculateColdOps(ops, searchableReplicationFactors, coldNodes, coldCollections, coldShards, coldReplicas);
+    calculateColdOps(ops, clusterState, searchableReplicationFactors, coldNodes, coldCollections, coldShards, coldReplicas);
 
     if (ops.isEmpty()) {
       return;
@@ -432,9 +478,11 @@ public class SearchRateTrigger extends TriggerBase {
     // TODO: eventually we may want to commission a new node
     if (!hotNodes.isEmpty() && hotShards.isEmpty() && hotCollections.isEmpty() && hotReplicas.isEmpty()) {
       // move replicas around
-      hotNodes.forEach((n, r) -> {
-        ops.add(new TriggerEvent.Op(aboveNodeOp, Suggester.Hint.SRC_NODE, n));
-      });
+      if (aboveNodeOp != null) {
+        hotNodes.forEach((n, r) -> {
+          ops.add(new TriggerEvent.Op(aboveNodeOp, Suggester.Hint.SRC_NODE, n));
+        });
+      }
     } else {
       // add replicas
       Map<String, Map<String, List<Pair<String, String>>>> hints = new HashMap<>();
@@ -472,9 +520,9 @@ public class SearchRateTrigger extends TriggerBase {
     if (numReplicas < 1) {
       numReplicas = 1;
     }
-    // ... and at most 3 replicas
-    if (numReplicas > 3) {
-      numReplicas = 3;
+    // ... and at most maxOps replicas
+    if (numReplicas > maxOps) {
+      numReplicas = maxOps;
     }
     for (int i = 0; i < numReplicas; i++) {
       hints.add(new Pair(collection, shard));
@@ -482,22 +530,27 @@ public class SearchRateTrigger extends TriggerBase {
   }
 
   private void calculateColdOps(List<TriggerEvent.Op> ops,
+                                ClusterState clusterState,
                                 Map<String, Map<String, AtomicInteger>> searchableReplicationFactors,
                                 Map<String, Double> coldNodes,
                                 Map<String, Double> coldCollections,
                                 Map<String, Map<String, Double>> coldShards,
                                 List<ReplicaInfo> coldReplicas) {
     // COLD NODES:
-    // Unlike in case of hot nodes, if a node is cold then any monitored
+    // Unlike the case of hot nodes, if a node is cold then any monitored
     // collections / shards / replicas located on that node are cold, too.
     // HOWEVER, we check only non-pull replicas and only from selected collections / shards,
     // so deleting a cold node is dangerous because it may interfere with these
-    // non-monitored resources
-    /*
-    coldNodes.forEach((node, rate) -> {
-      ops.add(new TriggerEvent.Op(belowNodeOp, Suggester.Hint.SRC_NODE, node));
-    });
-    */
+    // non-monitored resources - this is the reason the default belowNodeOp is null / ignored.
+    //
+    // Also, note that due to the way activity is measured only nodes that contain any
+    // monitored resources are considered - there may be cold nodes in the cluster that don't
+    // belong to the monitored collections and they will be ignored.
+    if (belowNodeOp != null) {
+      coldNodes.forEach((node, rate) -> {
+        ops.add(new TriggerEvent.Op(belowNodeOp, Suggester.Hint.SRC_NODE, node));
+      });
+    }
 
     // COLD COLLECTIONS
     // Probably can't do anything reasonable about whole cold collections
@@ -509,8 +562,8 @@ public class SearchRateTrigger extends TriggerBase {
     // address this by deleting cold replicas
 
     // COLD REPLICAS:
-    // Remove cold replicas but only when there's at least one more searchable replica
-    // still available (additional non-searchable replicas may exist, too)
+    // Remove cold replicas but only when there's at least a minimum number of searchable
+    // replicas still available (additional non-searchable replicas may exist, too)
     Map<String, Map<String, List<ReplicaInfo>>> byCollectionByShard = new HashMap<>();
     coldReplicas.forEach(ri -> {
       byCollectionByShard.computeIfAbsent(ri.getCollection(), c -> new HashMap<>())
@@ -519,14 +572,31 @@ public class SearchRateTrigger extends TriggerBase {
     });
     byCollectionByShard.forEach((coll, shards) -> {
       shards.forEach((shard, replicas) -> {
-        // only delete if there's at least one searchable replica left
-        // again, use a simple proportional controller with a limiter
+        // only delete if there's at least minRF searchable replicas left
         int rf = searchableReplicationFactors.get(coll).get(shard).get();
-        if (rf > replicas.size()) {
-          // delete at most 3 replicas at a time
-          AtomicInteger limit = new AtomicInteger(3);
+        // we only really need a leader and we may be allowed to remove other replicas
+        int minRF = 1;
+        // but check the official RF and don't go below that
+        Integer RF = clusterState.getCollection(coll).getReplicationFactor();
+        if (RF != null) {
+          minRF = RF;
+        }
+        // unless minReplicas is set explicitly
+        if (minReplicas != null) {
+          minRF = minReplicas;
+        }
+        if (minRF < 1) {
+          minRF = 1;
+        }
+        if (rf > minRF) {
+          // delete at most maxOps replicas at a time
+          AtomicInteger limit = new AtomicInteger(Math.min(maxOps, rf - minRF));
           replicas.forEach(ri -> {
             if (limit.get() == 0) {
+              return;
+            }
+            // don't delete a leader
+            if (ri.getBool(ZkStateReader.LEADER_PROP, false)) {
               return;
             }
             TriggerEvent.Op op = new TriggerEvent.Op(belowOp,
