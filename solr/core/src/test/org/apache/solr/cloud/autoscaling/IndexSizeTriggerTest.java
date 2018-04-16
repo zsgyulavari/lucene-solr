@@ -20,6 +20,7 @@ package org.apache.solr.cloud.autoscaling;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -38,12 +39,14 @@ import org.apache.solr.client.solrj.cloud.autoscaling.Suggester;
 import org.apache.solr.client.solrj.cloud.autoscaling.TriggerEventProcessorStage;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.client.solrj.request.UpdateRequest;
+import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.cloud.CloudTestUtils;
 import org.apache.solr.cloud.SolrCloudTestCase;
 import org.apache.solr.cloud.autoscaling.sim.SimCloudManager;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.cloud.ZkNodeProps;
 import org.apache.solr.common.params.CollectionParams;
+import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.Pair;
 import org.apache.solr.common.util.TimeSource;
@@ -455,6 +458,25 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
     }
     solrClient.commit(collectionName);
 
+    // check the actual size of shard to set the threshold
+    QueryResponse rsp = solrClient.query(params(CommonParams.QT, "/admin/metrics", "group", "core"));
+    NamedList<Object> nl = rsp.getResponse();
+    nl = (NamedList<Object>)nl.get("metrics");
+    int maxSize = 0;
+    for (Iterator<Map.Entry<String, Object>> it = nl.iterator(); it.hasNext(); ) {
+      Map.Entry<String, Object> e = it.next();
+      NamedList<Object> metrics = (NamedList<Object>)e.getValue();
+      Object o = metrics.get("INDEX.sizeInBytes");
+      assertNotNull("INDEX.sizeInBytes missing: " + metrics, o);
+      assertTrue("not a number", o instanceof Number);
+      if (maxSize < ((Number)o).intValue()) {
+        maxSize = ((Number)o).intValue();
+      }
+    }
+    assertTrue("maxSize should be non-zero", maxSize > 0);
+
+    int aboveBytes = maxSize * 2 / 3;
+
     long waitForSeconds = 3 + random().nextInt(5);
 
     // the trigger is initially disabled so that we have time to add listeners
@@ -469,7 +491,7 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
         // hit this limit when deleting
         "'belowDocs' : 100," +
         // hit this limit when indexing
-        "'aboveBytes' : 150000," +
+        "'aboveBytes' : " + aboveBytes + "," +
         // don't hit this limit when deleting
         "'belowBytes' : 10," +
         "'enabled' : false," +

@@ -104,6 +104,9 @@ API Changes
   Instead use IndexSearcher.createWeight(), rewriting the query first.
   (Alan Woodward)
 
+* LUCENE-8248: MergePolicyWrapper is renamed to FilterMergePolicy and now
+  also overrides getMaxCFSSegmentSizeMB (Mike Sokolov via Mike McCandless)
+
 New Features
 
 * LUCENE-8200: Allow doc-values to be updated atomically together
@@ -143,6 +146,10 @@ New Features
   helps merge policies in the soft-delete case to correctly implement retention
   policies without triggering uncessary merges. (Simon Willnauer, Mike McCandless)
 
+* LUCENE-8231: A new analysis module (nori) similar to Kuromoji
+  but to handle Korean using mecab-ko-dic and morphological analysis.
+  (Robert Muir, Jim Ferenczi)
+
 Bug Fixes
 
 * LUCENE-8234: Fixed bug in how spatial relationship is computed for
@@ -154,6 +161,10 @@ Bug Fixes
 * LUCENE-8243: IndexWriter.addIndexes(Directory[]) did not properly preserve
   index file names for updated doc values fields (Simon Willnauer,
   Michael McCandless, Nhat Nguyen)
+
+* LUCENE-8254: LRUQueryCache could cause IndexReader to hang on close, when
+  shared with another reader with no CacheHelper (Alan Woodward, Simon Willnauer,
+  Adrien Grand)
 
 Other
 

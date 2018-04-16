@@ -90,6 +90,15 @@ New Features
 
 * SOLR-12181: Add index size autoscaling trigger, based on document count or size in bytes. (ab)
 
+* SOLR-11982: Add possibility to define replica order with the shards.preference parameter to e.g. prefer PULL replicas
+  for distributed queries. (Ere Maijala, Tomás Fernández Löbbe)
+
+* SOLR-11336: DocBasedVersionConstraintsProcessorFactory is more extensible and now supports a list of versioned fields.
+  (versionField config may now be a comma-delimited list). (Michael Braun via David Smiley)
+
+* SOLR-11913: SolrJ SolrParams now implements Iterable<Map.Entry<String, String[]>> and also has a stream() method
+  using it for convenience. (David Smiley, Tapan Vaishnav)
+
 Bug Fixes
 ----------------------
 
@@ -136,6 +145,20 @@ Bug Fixes
 
 * SOLR-12201: TestReplicationHandler.doTestIndexFetchOnMasterRestart(): handle unexpected replication failures
   (Steve Rowe)
+
+* SOLR-12190: Need to properly escape output in GraphMLResponseWriter. (yonik)
+
+* SOLR-12214: Leader may skip publish itself as ACTIVE when its last published state is DOWN (Cao Manh Dat)
+
+* SOLR-12065: A successful restore collection should mark the shard state as active and not buffering
+  (Rohit, Varun Thacker)
+
+* SOLR-12150: Fix a test bug in CdcrBidirectionalTest.testBiDir (Steve Rowe, Amrit Sarkar via Varun Thacker)
+
+* SOLR-10513: ConjunctionSolrSpellChecker did not work with LuceneLevenshteinDistance (Amrit Sarkar via James Dyer)
+
+* SOLR-11724: Cdcr bootstrapping should ensure that non-leader replicas should sync with the leader
+  (Amrit Sarkar, Varun Thacker)
  
 Optimizations
 ----------------------
@@ -145,7 +168,7 @@ Optimizations
   a few segments diverge. (Ishan Chattopadhyaya, Shaun Sabo, John Gallagher)
 
 * SOLR-11731: LatLonPointSpatialField can now decode points from docValues when stored=false docValues=true,
-  albeit with maximum precision of 1.33cm (Karthik Ramachandran, David Smiley)
+  albeit with maximum precision of 1.37cm (Karthik Ramachandran, David Smiley)
 
 * SOLR-11891: DocStreamer now respects the ReturnFields when populating a SolrDocument, reducing the
   number of unneccessary fields a ResponseWriter will see if documentCache is used (wei wang, hossman)
@@ -1984,7 +2007,7 @@ Bug Fixes
 
 * SOLR-11024: ParallelStream should set the StreamContext when constructing SolrStreams (Joel Bernstein)
 
-* SOLR-10908: CloudSolrStream.toExpression incorrectly handles fq clauses (Rohit Singh via Erick Erickson)
+* SOLR-10908: CloudSolrStream.toExpression incorrectly handles fq clauses (Rohit via Erick Erickson)
 
 * SOLR-11177: CoreContainer.load needs to send lazily loaded core descriptors to the proper list rather than send
   them all to the transient lists. (Erick Erickson)
