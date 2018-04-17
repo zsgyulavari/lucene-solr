@@ -553,6 +553,13 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
     }
   }
 
+  /**
+   * Returns a SolrRequest to delete a node.
+   */
+  public static DeleteNode deleteNode(String node) {
+    return new DeleteNode(node);
+  }
+
   public static class DeleteNode extends AsyncCollectionAdminRequest {
     String node;
 

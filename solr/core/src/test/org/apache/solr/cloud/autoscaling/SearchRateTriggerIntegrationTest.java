@@ -284,6 +284,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         "'collections' : '" + COLL1 + "'," +
         "'aboveRate' : 1.0," +
         "'belowRate' : 0.1," +
+        // do nothing but generate an op
         "'belowNodeOp' : 'none'," +
         "'actions' : [" +
         "{'name':'compute','class':'" + ComputePlanAction.class.getName() + "'}," +

@@ -467,6 +467,7 @@ public class Policy implements MapWriter {
   static {
     ops.put(CollectionAction.ADDREPLICA, () -> new AddReplicaSuggester());
     ops.put(CollectionAction.DELETEREPLICA, () -> new DeleteReplicaSuggester());
+    ops.put(CollectionAction.DELETENODE, () -> new DeleteNodeSuggester());
     ops.put(CollectionAction.MOVEREPLICA, () -> new MoveReplicaSuggester());
     ops.put(CollectionAction.SPLITSHARD, () -> new SplitShardSuggester());
     ops.put(CollectionAction.MERGESHARDS, () -> new UnsupportedSuggester(CollectionAction.MERGESHARDS));

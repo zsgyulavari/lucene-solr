@@ -139,6 +139,9 @@ public class SearchRateTrigger extends TriggerBase {
     if (o != null) {
       try {
         minReplicas = Integer.parseInt(o.toString());
+        if (minReplicas < 1) {
+          throw new Exception("must be at least 1, or not set to use 'replicationFactor'");
+        }
       } catch (Exception e) {
         throw new TriggerValidationException(name, MIN_REPLICAS_PROP, "invalid value '" + o + "': " + e.toString());
       }
@@ -179,14 +182,13 @@ public class SearchRateTrigger extends TriggerBase {
     if (belowOp == null) {
       throw new TriggerValidationException(getName(), BELOW_OP_PROP, "unrecognized value: '" + belowOpStr + "'");
     }
-    Object aboveNodeObj = properties.get(ABOVE_NODE_OP_PROP);
+    Object aboveNodeObj = properties.getOrDefault(ABOVE_NODE_OP_PROP, CollectionParams.CollectionAction.MOVEREPLICA.toLower());
+    // do NOT set the default to DELETENODE
     Object belowNodeObj = properties.get(BELOW_NODE_OP_PROP);
-    if (aboveNodeObj != null) {
-      try {
-        aboveNodeOp = CollectionParams.CollectionAction.get(String.valueOf(aboveNodeObj));
-      } catch (Exception e) {
-        throw new TriggerValidationException(getName(), ABOVE_NODE_OP_PROP, "unrecognized value: '" + aboveNodeObj + "'");
-      }
+    try {
+      aboveNodeOp = CollectionParams.CollectionAction.get(String.valueOf(aboveNodeObj));
+    } catch (Exception e) {
+      throw new TriggerValidationException(getName(), ABOVE_NODE_OP_PROP, "unrecognized value: '" + aboveNodeObj + "'");
     }
     if (belowNodeObj != null) {
       try {
