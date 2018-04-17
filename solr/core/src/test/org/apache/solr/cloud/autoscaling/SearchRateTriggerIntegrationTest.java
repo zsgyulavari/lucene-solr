@@ -71,6 +71,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
   private static CountDownLatch listenerCreated = new CountDownLatch(1);
   private static Map<String, List<CapturedEvent>> listenerEvents = new HashMap<>();
   private static CountDownLatch finished = new CountDownLatch(1);
+  private static CountDownLatch started = new CountDownLatch(1);
   private static SolrCloudManager cloudManager;
 
   private int waitForSeconds;
@@ -104,6 +105,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     deleteChildrenRecursively(ZkStateReader.SOLR_AUTOSCALING_NODE_ADDED_PATH);
 
     finished = new CountDownLatch(1);
+    started = new CountDownLatch(1);
     listenerEvents = new HashMap<>();
     waitForSeconds = 3 + random().nextInt(5);
   }
@@ -120,7 +122,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         "conf", 1, 2);
     create.process(solrClient);
 
-    CloudTestUtils.waitForState(cloudManager, COLL1, 20, TimeUnit.SECONDS,
+    CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,
         CloudTestUtils.clusterShape(1, 2));
 
     // the trigger is initially disabled so that we have the time to set up listeners
@@ -144,6 +146,19 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     assertEquals(response.get("result").toString(), "success");
 
     String setListenerCommand = "{" +
+        "'set-listener' : " +
+        "{" +
+        "'name' : 'started'," +
+        "'trigger' : 'search_rate_trigger1'," +
+        "'stage' : ['STARTED']," +
+        "'class' : '" + StartedProcessingListener.class.getName() + "'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    setListenerCommand = "{" +
         "'set-listener' : " +
         "{" +
         "'name' : 'srt'," +
@@ -187,8 +202,11 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
 
     timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
 
-    boolean await = finished.await(20, TimeUnit.SECONDS);
+    boolean await = started.await(20, TimeUnit.SECONDS);
     assertTrue("The trigger did not fire at all", await);
+
+    await = finished.await(60, TimeUnit.SECONDS);
+    assertTrue("The trigger did not finish processing", await);
 
     // suspend the trigger
     String suspendTriggerCommand = "{" +
@@ -262,7 +280,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(COLL1,
         "conf", 1, 2);
     create.process(solrClient);
-    CloudTestUtils.waitForState(cloudManager, COLL1, 20, TimeUnit.SECONDS,
+    CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,
         CloudTestUtils.clusterShape(1, 2));
 
     // add a couple of spare replicas above RF. Use different types to verify that only
@@ -272,7 +290,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     solrClient.request(CollectionAdminRequest.addReplicaToShard(COLL1, "shard1", Replica.Type.TLOG));
     solrClient.request(CollectionAdminRequest.addReplicaToShard(COLL1, "shard1", Replica.Type.PULL));
 
-    CloudTestUtils.waitForState(cloudManager, COLL1, 20, TimeUnit.SECONDS,
+    CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,
         CloudTestUtils.clusterShape(1, 5));
 
     String setTriggerCommand = "{" +
@@ -296,6 +314,19 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     assertEquals(response.get("result").toString(), "success");
 
     String setListenerCommand = "{" +
+        "'set-listener' : " +
+        "{" +
+        "'name' : 'started'," +
+        "'trigger' : 'search_rate_trigger2'," +
+        "'stage' : ['STARTED']," +
+        "'class' : '" + StartedProcessingListener.class.getName() + "'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    setListenerCommand = "{" +
         "'set-listener' : " +
         "{" +
         "'name' : 'srt'," +
@@ -336,8 +367,10 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
 
     timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
 
-    boolean await = finished.await(20, TimeUnit.SECONDS);
+    boolean await = started.await(20, TimeUnit.SECONDS);
     assertTrue("The trigger did not fire at all", await);
+    await = finished.await(60, TimeUnit.SECONDS);
+    assertTrue("The trigger did not finish processing", await);
 
     // suspend the trigger
     String suspendTriggerCommand = "{" +
@@ -374,11 +407,12 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     assertEquals("cold replicas", 2, coldReplicas.get());
 
     // now the collection should be back to RF = 2, with one additional PULL replica
-    CloudTestUtils.waitForState(cloudManager, COLL1, 20, TimeUnit.SECONDS,
+    CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,
         CloudTestUtils.clusterShape(1, 3));
 
     listenerEvents.clear();
     finished = new CountDownLatch(1);
+    started = new CountDownLatch(1);
 
     // resume trigger
     req = createAutoScalingRequest(SolrRequest.METHOD.POST, resumeTriggerCommand);
@@ -388,8 +422,10 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     // there should be only coldNode ops now, and no coldReplica ops since searchable RF == collection RF
     timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
 
-    await = finished.await(20, TimeUnit.SECONDS);
+    await = started.await(20, TimeUnit.SECONDS);
     assertTrue("The trigger did not fire at all", await);
+    await = finished.await(60, TimeUnit.SECONDS);
+    assertTrue("The trigger did not finish processing", await);
 
     // suspend trigger
     req = createAutoScalingRequest(SolrRequest.METHOD.POST, suspendTriggerCommand);
@@ -410,6 +446,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
 
     listenerEvents.clear();
     finished = new CountDownLatch(1);
+    started = new CountDownLatch(1);
 
     // now allow single replicas
     setTriggerCommand = "{" +
@@ -434,8 +471,10 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
 
     timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
 
-    await = finished.await(20, TimeUnit.SECONDS);
+    await = started.await(20, TimeUnit.SECONDS);
     assertTrue("The trigger did not fire at all", await);
+    await = finished.await(60, TimeUnit.SECONDS);
+    assertTrue("The trigger did not finish processing", await);
 
     // suspend trigger
     req = createAutoScalingRequest(SolrRequest.METHOD.POST, suspendTriggerCommand);
@@ -468,7 +507,173 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     assertEquals("colReplicas", 1, coldReplicas2.get());
 
     // now the collection should be at RF == 1, with one additional PULL replica
-    CloudTestUtils.waitForState(cloudManager, COLL1, 20, TimeUnit.SECONDS,
+    CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,
+        CloudTestUtils.clusterShape(1, 2));
+  }
+
+  @Test
+  public void testDeleteNode() throws Exception {
+    CloudSolrClient solrClient = cluster.getSolrClient();
+    String COLL1 = "deleteNode_collection";
+    CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(COLL1,
+        "conf", 1, 2);
+
+    create.process(solrClient);
+    CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,
+        CloudTestUtils.clusterShape(1, 2));
+
+    // add a couple of spare replicas above RF. Use different types to verify that only
+    // searchable replicas are considered
+    // these additional replicas will be placed on other nodes in the cluster
+    solrClient.request(CollectionAdminRequest.addReplicaToShard(COLL1, "shard1", Replica.Type.NRT));
+    solrClient.request(CollectionAdminRequest.addReplicaToShard(COLL1, "shard1", Replica.Type.TLOG));
+    solrClient.request(CollectionAdminRequest.addReplicaToShard(COLL1, "shard1", Replica.Type.PULL));
+
+    CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,
+        CloudTestUtils.clusterShape(1, 5));
+
+    String setTriggerCommand = "{" +
+        "'set-trigger' : {" +
+        "'name' : 'search_rate_trigger3'," +
+        "'event' : 'searchRate'," +
+        "'waitFor' : '" + waitForSeconds + "s'," +
+        "'enabled' : false," +
+        "'collections' : '" + COLL1 + "'," +
+        "'aboveRate' : 1.0," +
+        "'belowRate' : 0.1," +
+        // allow deleting all spare replicas
+        "'minReplicas' : 1," +
+        // allow requesting all deletions in one event
+        "'maxOps' : 10," +
+        // delete underutilised nodes
+        "'belowNodeOp' : 'DELETENODE'," +
+        "'actions' : [" +
+        "{'name':'compute','class':'" + ComputePlanAction.class.getName() + "'}," +
+        "{'name':'execute','class':'" + ExecutePlanAction.class.getName() + "'}" +
+        "]" +
+        "}}";
+    SolrRequest req = createAutoScalingRequest(SolrRequest.METHOD.POST, setTriggerCommand);
+    NamedList<Object> response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    String setListenerCommand = "{" +
+        "'set-listener' : " +
+        "{" +
+        "'name' : 'started'," +
+        "'trigger' : 'search_rate_trigger3'," +
+        "'stage' : ['STARTED']," +
+        "'class' : '" + StartedProcessingListener.class.getName() + "'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    setListenerCommand = "{" +
+        "'set-listener' : " +
+        "{" +
+        "'name' : 'srt'," +
+        "'trigger' : 'search_rate_trigger3'," +
+        "'stage' : ['FAILED','SUCCEEDED']," +
+        "'afterAction': ['compute', 'execute']," +
+        "'class' : '" + CapturingTriggerListener.class.getName() + "'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    setListenerCommand = "{" +
+        "'set-listener' : " +
+        "{" +
+        "'name' : 'finished'," +
+        "'trigger' : 'search_rate_trigger3'," +
+        "'stage' : ['SUCCEEDED']," +
+        "'class' : '" + FinishedProcessingListener.class.getName() + "'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, setListenerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
+
+    // enable the trigger
+    String resumeTriggerCommand = "{" +
+        "'resume-trigger' : {" +
+        "'name' : 'search_rate_trigger3'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, resumeTriggerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
+
+    boolean await = started.await(20, TimeUnit.SECONDS);
+    assertTrue("The trigger did not fire at all", await);
+    await = finished.await(90, TimeUnit.SECONDS);
+    assertTrue("The trigger did not finish processing", await);
+
+    // suspend the trigger
+    String suspendTriggerCommand = "{" +
+        "'suspend-trigger' : {" +
+        "'name' : 'search_rate_trigger3'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, suspendTriggerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
+
+    timeSource.sleep(5000);
+
+    List<CapturedEvent> events = listenerEvents.get("srt");
+    assertEquals(events.toString(), 3, events.size());
+
+    CapturedEvent ev = events.get(0);
+    assertEquals(ev.toString(), "compute", ev.actionName);
+    List<TriggerEvent.Op> ops = (List<TriggerEvent.Op>)ev.event.getProperty(TriggerEvent.REQUESTED_OPS);
+    assertNotNull("there should be some requestedOps: " + ev.toString(), ops);
+    // 3 DELETEREPLICA, 3 DELETENODE
+    assertEquals(ops.toString(), 6, ops.size());
+    AtomicInteger replicas = new AtomicInteger();
+    AtomicInteger nodes = new AtomicInteger();
+    ops.forEach(op -> {
+      if (op.getAction().equals(CollectionParams.CollectionAction.DELETEREPLICA)) {
+        replicas.incrementAndGet();
+      } else if (op.getAction().equals(CollectionParams.CollectionAction.DELETENODE)) {
+        nodes.incrementAndGet();
+      } else {
+        fail("unexpected op: " + op);
+      }
+    });
+    assertEquals(ops.toString(), 3, replicas.get());
+    assertEquals(ops.toString(), 3, nodes.get());
+    // check status
+    ev = events.get(1);
+    assertEquals(ev.toString(), "execute", ev.actionName);
+    List<NamedList<Object>> responses = (List<NamedList<Object>>)ev.context.get("properties.responses");
+    assertNotNull(ev.toString(), responses);
+    assertEquals(responses.toString(), 6, responses.size());
+    replicas.set(0);
+    nodes.set(0);
+    responses.forEach(m -> {
+      if (m.get("success") != null) {
+        replicas.incrementAndGet();
+      } else if (m.get("status") != null) {
+        NamedList<Object> status = (NamedList<Object>)m.get("status");
+        if ("completed".equals(status.get("state"))) {
+          nodes.incrementAndGet();
+        } else {
+          fail("unexpected DELETENODE status: " + m);
+        }
+      } else {
+        fail("unexpected status: " + m);
+      }
+    });
+
+    // we are left with one searchable replica and one PULL replica
+    CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,
         CloudTestUtils.clusterShape(1, 2));
   }
 
@@ -486,6 +691,14 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
       CapturedEvent ev = new CapturedEvent(timeSource.getTimeNs(), context, config, stage, actionName, event, message);
       log.info("=======> " + ev);
       lst.add(ev);
+    }
+  }
+
+  public static class StartedProcessingListener extends TriggerListenerBase {
+
+    @Override
+    public void onEvent(TriggerEvent event, TriggerEventProcessorStage stage, String actionName, ActionContext context, Throwable error, String message) throws Exception {
+      started.countDown();
     }
   }
 

@@ -230,20 +230,26 @@ the value is set to 1. Note also that shard leaders are never deleted.
 
 `aboveOp`:: collection action to request when the upper threshold for a shard or replica is
 exceeded. Default action is `ADDREPLICA` and the trigger will request 1 to `maxOps` operations
-per shard per event, depending how much the rate is exceeded.
+per shard per event, depending how much the rate is exceeded. This property can be set to 'NONE'
+to effectively disable the action (but still report it to the listeners).
 
 `aboveNodeOp`:: collection action to request when the upper threshold for a node is exceeded.
 Default action is `MOVEREPLICA`, and the trigger will request 1 replica operation per hot node per event.
+If both `aboveOp` and `aboveNodeOp` operations are requested then `aboveNodeOp` operations are
+always requested first. This property can be set to 'NONE' to effectively disable the action (but still report it to the listeners).
 
 `belowOp`:: collection action to request when the lower threshold for a shard or replica is
 exceeded. Default action is `DELETEREPLICA`, and the trigger will request at most `maxOps` replicas
-to be deleted from eligible cold shards.
+to be deleted from eligible cold shards. This property can be set to 'NONE'
+to effectively disable the action (but still report it to the listeners).
 
 `belowNodeOp`:: action to request when the lower threshold for a node is exceeded.
 Default action is null (not set) and the condition is ignored, because in many cases the
 trigger will monitor only some selected resources (non-pull replica types from selected
 collections / shards) so setting this by default to eg. `DELETENODE` could interfere with
 these non-monitored resources. The trigger will request 1 operation per cold node per event.
+If both `belowOp` and `belowNodeOp` operations are requested then `belowOp` operations are
+always requested first.
 
 .Example:
 A search rate trigger that monitors collection "test" and adds new replicas if 5-minute

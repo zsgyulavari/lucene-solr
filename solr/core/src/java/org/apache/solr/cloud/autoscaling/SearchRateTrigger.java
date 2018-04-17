@@ -545,22 +545,6 @@ public class SearchRateTrigger extends TriggerBase {
                                 Map<String, Double> coldCollections,
                                 Map<String, Map<String, Double>> coldShards,
                                 List<ReplicaInfo> coldReplicas) {
-    // COLD NODES:
-    // Unlike the case of hot nodes, if a node is cold then any monitored
-    // collections / shards / replicas located on that node are cold, too.
-    // HOWEVER, we check only non-pull replicas and only from selected collections / shards,
-    // so deleting a cold node is dangerous because it may interfere with these
-    // non-monitored resources - this is the reason the default belowNodeOp is null / ignored.
-    //
-    // Also, note that due to the way activity is measured only nodes that contain any
-    // monitored resources are considered - there may be cold nodes in the cluster that don't
-    // belong to the monitored collections and they will be ignored.
-    if (belowNodeOp != null) {
-      coldNodes.forEach((node, rate) -> {
-        ops.add(new TriggerEvent.Op(belowNodeOp, Suggester.Hint.SRC_NODE, node));
-      });
-    }
-
     // COLD COLLECTIONS
     // Probably can't do anything reasonable about whole cold collections
     // because they may be needed even if not used.
@@ -573,6 +557,8 @@ public class SearchRateTrigger extends TriggerBase {
     // COLD REPLICAS:
     // Remove cold replicas but only when there's at least a minimum number of searchable
     // replicas still available (additional non-searchable replicas may exist, too)
+    // NOTE: do this before adding ops for DELETENODE because we don't want to attempt
+    // deleting replicas that have been already moved elsewhere
     Map<String, Map<String, List<ReplicaInfo>>> byCollectionByShard = new HashMap<>();
     coldReplicas.forEach(ri -> {
       byCollectionByShard.computeIfAbsent(ri.getCollection(), c -> new HashMap<>())
@@ -617,6 +603,24 @@ public class SearchRateTrigger extends TriggerBase {
         }
       });
     });
+
+    // COLD NODES:
+    // Unlike the case of hot nodes, if a node is cold then any monitored
+    // collections / shards / replicas located on that node are cold, too.
+    // HOWEVER, we check only non-pull replicas and only from selected collections / shards,
+    // so deleting a cold node is dangerous because it may interfere with these
+    // non-monitored resources - this is the reason the default belowNodeOp is null / ignored.
+    //
+    // Also, note that due to the way activity is measured only nodes that contain any
+    // monitored resources are considered - there may be cold nodes in the cluster that don't
+    // belong to the monitored collections and they will be ignored.
+    if (belowNodeOp != null) {
+      coldNodes.forEach((node, rate) -> {
+        ops.add(new TriggerEvent.Op(belowNodeOp, Suggester.Hint.SRC_NODE, node));
+      });
+    }
+
+
   }
 
   private boolean waitForElapsed(String name, long now, Map<String, Long> lastEventMap) {
