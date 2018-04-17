@@ -21,8 +21,10 @@ import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -41,6 +43,7 @@ import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.AutoScalingParams;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.util.Pair;
+import org.apache.solr.common.util.StrUtils;
 import org.apache.solr.common.util.Utils;
 import org.apache.solr.core.SolrResourceLoader;
 import org.apache.solr.metrics.SolrCoreMetricManager;
@@ -53,6 +56,7 @@ import org.slf4j.LoggerFactory;
 public class SearchRateTrigger extends TriggerBase {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+  public static final String COLLECTIONS_PROP = "collections";
   public static final String METRIC_PROP = "metric";
   public static final String MAX_OPS_PROP = "maxOps";
   public static final String MIN_REPLICAS_PROP = "minReplicas";
@@ -78,7 +82,7 @@ public class SearchRateTrigger extends TriggerBase {
   private String metric;
   private int maxOps;
   private Integer minReplicas = null;
-  private String collection;
+  private final Set<String> collections = new HashSet<>();
   private String shard;
   private String node;
   private double aboveRate;
@@ -97,7 +101,7 @@ public class SearchRateTrigger extends TriggerBase {
     this.state.put("lastShardEvent", lastShardEvent);
     this.state.put("lastReplicaEvent", lastReplicaEvent);
     TriggerUtils.validProperties(validProperties,
-        AutoScalingParams.COLLECTION, AutoScalingParams.SHARD, AutoScalingParams.NODE,
+        COLLECTIONS_PROP, AutoScalingParams.SHARD, AutoScalingParams.NODE,
         METRIC_PROP,
         MAX_OPS_PROP,
         MIN_REPLICAS_PROP,
@@ -113,10 +117,13 @@ public class SearchRateTrigger extends TriggerBase {
   public void configure(SolrResourceLoader loader, SolrCloudManager cloudManager, Map<String, Object> properties) throws TriggerValidationException {
     super.configure(loader, cloudManager, properties);
     // parse config options
-    collection = (String)properties.getOrDefault(AutoScalingParams.COLLECTION, Policy.ANY);
+    String collectionsStr = (String)properties.get(COLLECTIONS_PROP);
+    if (collectionsStr != null) {
+      collections.addAll(StrUtils.splitSmart(collectionsStr, ','));
+    }
     shard = (String)properties.getOrDefault(AutoScalingParams.SHARD, Policy.ANY);
-    if (collection.equals(Policy.ANY) && !shard.equals(Policy.ANY)) {
-      throw new TriggerValidationException(name, AutoScalingParams.SHARD, "When 'shard' is other than #ANY then collection name must be also other than #ANY");
+    if (!shard.equals(Policy.ANY) && (collections.isEmpty() || collections.size() > 1)) {
+      throw new TriggerValidationException(name, AutoScalingParams.SHARD, "When 'shard' is other than #ANY then exactly one collection name must be set");
     }
     node = (String)properties.getOrDefault(AutoScalingParams.NODE, Policy.ANY);
     metric = (String)properties.getOrDefault(METRIC_PROP, DEFAULT_METRIC);
@@ -344,7 +351,7 @@ public class SearchRateTrigger extends TriggerBase {
             })
             .mapToDouble(r -> (Double)r.getVariable(AutoScalingParams.RATE)).sum();
         if (waitForElapsed(coll + "." + sh, now, lastShardEvent) &&
-            (collection.equals(Policy.ANY) || collection.equals(coll)) &&
+            (collections.isEmpty() || collections.contains(coll)) &&
             (shard.equals(Policy.ANY) || shard.equals(sh))) {
           if (shardRate > aboveRate) {
             hotShards.computeIfAbsent(coll, s -> new HashMap<>()).put(sh, shardRate);
@@ -362,7 +369,7 @@ public class SearchRateTrigger extends TriggerBase {
           .mapToDouble(e -> e.getValue().stream()
               .mapToDouble(r -> (Double)r.getVariable(AutoScalingParams.RATE)).sum()).sum();
       if (waitForElapsed(coll, now, lastCollectionEvent) &&
-          (collection.equals(Policy.ANY) || collection.equals(coll))) {
+          (collections.isEmpty() || collections.contains(coll))) {
         if (total > aboveRate) {
           hotCollections.put(coll, total);
         } else if (total < belowRate) {

@@ -39,12 +39,16 @@ import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.cloud.CloudTestUtils;
 import org.apache.solr.cloud.SolrCloudTestCase;
 import org.apache.solr.common.cloud.Replica;
+import org.apache.solr.common.cloud.ZkNodeProps;
+import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
+import org.apache.solr.common.util.Utils;
 import org.apache.solr.core.SolrResourceLoader;
 import org.apache.solr.util.LogLevel;
+import org.apache.zookeeper.data.Stat;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -54,6 +58,7 @@ import org.slf4j.LoggerFactory;
 import static org.apache.solr.cloud.autoscaling.AutoScalingHandlerTest.createAutoScalingRequest;
 import static org.apache.solr.cloud.autoscaling.TriggerIntegrationTest.WAIT_FOR_DELTA_NANOS;
 import static org.apache.solr.cloud.autoscaling.TriggerIntegrationTest.timeSource;
+import static org.apache.solr.common.cloud.ZkStateReader.SOLR_AUTOSCALING_CONF_PATH;
 
 /**
  * Integration test for {@link SearchRateTrigger}
@@ -89,9 +94,22 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
   @Before
   public void beforeTest() throws Exception {
     cluster.deleteAllCollections();
+    // clear any persisted auto scaling configuration
+    Stat stat = zkClient().setData(SOLR_AUTOSCALING_CONF_PATH, Utils.toJSON(new ZkNodeProps()), true);
+    log.info(SOLR_AUTOSCALING_CONF_PATH + " reset, new znode version {}", stat.getVersion());
+    timeSource.sleep(5000);
+    deleteChildrenRecursively(ZkStateReader.SOLR_AUTOSCALING_EVENTS_PATH);
+    deleteChildrenRecursively(ZkStateReader.SOLR_AUTOSCALING_TRIGGER_STATE_PATH);
+    deleteChildrenRecursively(ZkStateReader.SOLR_AUTOSCALING_NODE_LOST_PATH);
+    deleteChildrenRecursively(ZkStateReader.SOLR_AUTOSCALING_NODE_ADDED_PATH);
+
     finished = new CountDownLatch(1);
-    listenerEvents.clear();
+    listenerEvents = new HashMap<>();
     waitForSeconds = 3 + random().nextInt(5);
+  }
+
+  private void deleteChildrenRecursively(String path) throws Exception {
+    cloudManager.getDistribStateManager().removeRecursively(path, true, false);
   }
 
   @Test
@@ -109,11 +127,11 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     // and generate the traffic
     String setTriggerCommand = "{" +
         "'set-trigger' : {" +
-        "'name' : 'search_rate_trigger'," +
+        "'name' : 'search_rate_trigger1'," +
         "'event' : 'searchRate'," +
         "'waitFor' : '" + waitForSeconds + "s'," +
         "'enabled' : false," +
-        "'collection' : '" + COLL1 + "'," +
+        "'collections' : '" + COLL1 + "'," +
         "'aboveRate' : 1.0," +
         "'belowRate' : 0.1," +
         "'actions' : [" +
@@ -129,7 +147,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         "'set-listener' : " +
         "{" +
         "'name' : 'srt'," +
-        "'trigger' : 'search_rate_trigger'," +
+        "'trigger' : 'search_rate_trigger1'," +
         "'stage' : ['FAILED','SUCCEEDED']," +
         "'afterAction': ['compute', 'execute']," +
         "'class' : '" + CapturingTriggerListener.class.getName() + "'" +
@@ -143,7 +161,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         "'set-listener' : " +
         "{" +
         "'name' : 'finished'," +
-        "'trigger' : 'search_rate_trigger'," +
+        "'trigger' : 'search_rate_trigger1'," +
         "'stage' : ['SUCCEEDED']," +
         "'class' : '" + FinishedProcessingListener.class.getName() + "'" +
         "}" +
@@ -160,7 +178,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     // enable the trigger
     String resumeTriggerCommand = "{" +
         "'resume-trigger' : {" +
-        "'name' : 'search_rate_trigger'" +
+        "'name' : 'search_rate_trigger1'" +
         "}" +
         "}";
     req = createAutoScalingRequest(SolrRequest.METHOD.POST, resumeTriggerCommand);
@@ -171,6 +189,16 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
 
     boolean await = finished.await(20, TimeUnit.SECONDS);
     assertTrue("The trigger did not fire at all", await);
+
+    // suspend the trigger
+    String suspendTriggerCommand = "{" +
+        "'suspend-trigger' : {" +
+        "'name' : 'search_rate_trigger1'" +
+        "}" +
+        "}";
+    req = createAutoScalingRequest(SolrRequest.METHOD.POST, suspendTriggerCommand);
+    response = solrClient.request(req);
+    assertEquals(response.get("result").toString(), "success");
 
     timeSource.sleep(5000);
 
@@ -234,6 +262,9 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(COLL1,
         "conf", 1, 2);
     create.process(solrClient);
+    CloudTestUtils.waitForState(cloudManager, COLL1, 20, TimeUnit.SECONDS,
+        CloudTestUtils.clusterShape(1, 2));
+
     // add a couple of spare replicas above RF. Use different types to verify that only
     // searchable replicas are considered
     // these additional replicas will be placed on other nodes in the cluster
@@ -246,11 +277,11 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
 
     String setTriggerCommand = "{" +
         "'set-trigger' : {" +
-        "'name' : 'search_rate_trigger'," +
+        "'name' : 'search_rate_trigger2'," +
         "'event' : 'searchRate'," +
         "'waitFor' : '" + waitForSeconds + "s'," +
         "'enabled' : false," +
-        "'collection' : '" + COLL1 + "'," +
+        "'collections' : '" + COLL1 + "'," +
         "'aboveRate' : 1.0," +
         "'belowRate' : 0.1," +
         "'belowNodeOp' : 'none'," +
@@ -267,7 +298,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         "'set-listener' : " +
         "{" +
         "'name' : 'srt'," +
-        "'trigger' : 'search_rate_trigger'," +
+        "'trigger' : 'search_rate_trigger2'," +
         "'stage' : ['FAILED','SUCCEEDED']," +
         "'afterAction': ['compute', 'execute']," +
         "'class' : '" + CapturingTriggerListener.class.getName() + "'" +
@@ -281,7 +312,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         "'set-listener' : " +
         "{" +
         "'name' : 'finished'," +
-        "'trigger' : 'search_rate_trigger'," +
+        "'trigger' : 'search_rate_trigger2'," +
         "'stage' : ['SUCCEEDED']," +
         "'class' : '" + FinishedProcessingListener.class.getName() + "'" +
         "}" +
@@ -295,7 +326,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     // enable the trigger
     String resumeTriggerCommand = "{" +
         "'resume-trigger' : {" +
-        "'name' : 'search_rate_trigger'" +
+        "'name' : 'search_rate_trigger2'" +
         "}" +
         "}";
     req = createAutoScalingRequest(SolrRequest.METHOD.POST, resumeTriggerCommand);
@@ -308,10 +339,9 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     assertTrue("The trigger did not fire at all", await);
 
     // suspend the trigger
-    // enable the trigger
     String suspendTriggerCommand = "{" +
         "'suspend-trigger' : {" +
-        "'name' : 'search_rate_trigger'" +
+        "'name' : 'search_rate_trigger2'" +
         "}" +
         "}";
     req = createAutoScalingRequest(SolrRequest.METHOD.POST, suspendTriggerCommand);
@@ -383,11 +413,11 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     // now allow single replicas
     setTriggerCommand = "{" +
         "'set-trigger' : {" +
-        "'name' : 'search_rate_trigger'," +
+        "'name' : 'search_rate_trigger2'," +
         "'event' : 'searchRate'," +
         "'waitFor' : '" + waitForSeconds + "s'," +
         "'enabled' : true," +
-        "'collection' : '" + COLL1 + "'," +
+        "'collections' : '" + COLL1 + "'," +
         "'aboveRate' : 1.0," +
         "'belowRate' : 0.1," +
         "'minReplicas' : 1," +
