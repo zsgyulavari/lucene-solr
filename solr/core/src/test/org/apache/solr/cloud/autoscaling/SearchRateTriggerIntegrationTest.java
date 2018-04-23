@@ -277,14 +277,14 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
   public void testBelowSearchRate() throws Exception {
     CloudSolrClient solrClient = cluster.getSolrClient();
     String COLL1 = "belowRate_collection";
+    // replicationFactor == 2
     CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(COLL1,
         "conf", 1, 2);
     create.process(solrClient);
     CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,
         CloudTestUtils.clusterShape(1, 2));
 
-    // add a couple of spare replicas above RF. Use different types to verify that only
-    // searchable replicas are considered
+    // add a couple of spare replicas above RF. Use different types.
     // these additional replicas will be placed on other nodes in the cluster
     solrClient.request(CollectionAdminRequest.addReplicaToShard(COLL1, "shard1", Replica.Type.NRT));
     solrClient.request(CollectionAdminRequest.addReplicaToShard(COLL1, "shard1", Replica.Type.TLOG));
@@ -390,8 +390,8 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     assertEquals(ev.toString(), "compute", ev.actionName);
     List<TriggerEvent.Op> ops = (List<TriggerEvent.Op>)ev.event.getProperty(TriggerEvent.REQUESTED_OPS);
     assertNotNull("there should be some requestedOps: " + ev.toString(), ops);
-    // 3 cold nodes, 2 cold replicas
-    assertEquals(ops.toString(), 5, ops.size());
+    // 4 cold nodes, 3 cold replicas
+    assertEquals(ops.toString(), 7, ops.size());
     AtomicInteger coldNodes = new AtomicInteger();
     AtomicInteger coldReplicas = new AtomicInteger();
     ops.forEach(op -> {
@@ -403,12 +403,12 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         fail("unexpected op: " + op);
       }
     });
-    assertEquals("cold nodes", 3, coldNodes.get());
-    assertEquals("cold replicas", 2, coldReplicas.get());
+    assertEquals("cold nodes", 4, coldNodes.get());
+    assertEquals("cold replicas", 3, coldReplicas.get());
 
-    // now the collection should be back to RF = 2, with one additional PULL replica
+    // now the collection should be down to RF = 2
     CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,
-        CloudTestUtils.clusterShape(1, 3));
+        CloudTestUtils.clusterShape(1, 2));
 
     listenerEvents.clear();
     finished = new CountDownLatch(1);
@@ -508,7 +508,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
 
     // now the collection should be at RF == 1, with one additional PULL replica
     CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,
-        CloudTestUtils.clusterShape(1, 2));
+        CloudTestUtils.clusterShape(1, 1));
   }
 
   @Test
@@ -634,8 +634,8 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     assertEquals(ev.toString(), "compute", ev.actionName);
     List<TriggerEvent.Op> ops = (List<TriggerEvent.Op>)ev.event.getProperty(TriggerEvent.REQUESTED_OPS);
     assertNotNull("there should be some requestedOps: " + ev.toString(), ops);
-    // 3 DELETEREPLICA, 3 DELETENODE
-    assertEquals(ops.toString(), 6, ops.size());
+    // 4 DELETEREPLICA, 4 DELETENODE
+    assertEquals(ops.toString(), 8, ops.size());
     AtomicInteger replicas = new AtomicInteger();
     AtomicInteger nodes = new AtomicInteger();
     ops.forEach(op -> {
@@ -647,14 +647,14 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         fail("unexpected op: " + op);
       }
     });
-    assertEquals(ops.toString(), 3, replicas.get());
-    assertEquals(ops.toString(), 3, nodes.get());
+    assertEquals(ops.toString(), 4, replicas.get());
+    assertEquals(ops.toString(), 4, nodes.get());
     // check status
     ev = events.get(1);
     assertEquals(ev.toString(), "execute", ev.actionName);
     List<NamedList<Object>> responses = (List<NamedList<Object>>)ev.context.get("properties.responses");
     assertNotNull(ev.toString(), responses);
-    assertEquals(responses.toString(), 6, responses.size());
+    assertEquals(responses.toString(), 8, responses.size());
     replicas.set(0);
     nodes.set(0);
     responses.forEach(m -> {
@@ -672,9 +672,12 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
       }
     });
 
-    // we are left with one searchable replica and one PULL replica
+    assertEquals(responses.toString(), 4, replicas.get());
+    assertEquals(responses.toString(), 4, nodes.get());
+
+    // we are left with one searchable replica
     CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,
-        CloudTestUtils.clusterShape(1, 2));
+        CloudTestUtils.clusterShape(1, 1));
   }
 
   public static class CapturingTriggerListener extends TriggerListenerBase {

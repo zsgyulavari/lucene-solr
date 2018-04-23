@@ -30,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.AtomicDouble;
 import org.apache.solr.client.solrj.cloud.autoscaling.Policy;
 import org.apache.solr.client.solrj.cloud.autoscaling.ReplicaInfo;
@@ -66,6 +67,11 @@ public class SearchRateTrigger extends TriggerBase {
   public static final String BELOW_OP_PROP = "belowOp";
   public static final String ABOVE_NODE_OP_PROP = "aboveNodeOp";
   public static final String BELOW_NODE_OP_PROP = "belowNodeOp";
+
+  // back-compat
+  public static final String BC_COLLECTION_PROP = "collection";
+  public static final String BC_RATE_PROP = "rate";
+
 
   public static final String HOT_NODES = "hotNodes";
   public static final String HOT_COLLECTIONS = "hotCollections";
@@ -110,7 +116,10 @@ public class SearchRateTrigger extends TriggerBase {
         ABOVE_NODE_OP_PROP,
         BELOW_NODE_OP_PROP,
         ABOVE_RATE_PROP,
-        BELOW_RATE_PROP);
+        BELOW_RATE_PROP,
+        // back-compat props
+        BC_COLLECTION_PROP,
+        BC_RATE_PROP);
   }
 
   @Override
@@ -120,6 +129,13 @@ public class SearchRateTrigger extends TriggerBase {
     String collectionsStr = (String)properties.get(COLLECTIONS_PROP);
     if (collectionsStr != null) {
       collections.addAll(StrUtils.splitSmart(collectionsStr, ','));
+    }
+    // check back-compat collection prop
+    collectionsStr = (String)properties.get(BC_COLLECTION_PROP);
+    if (collectionsStr != null) {
+      if (!collectionsStr.equals(Policy.ANY)) {
+        collections.add(collectionsStr);
+      }
     }
     shard = (String)properties.getOrDefault(AutoScalingParams.SHARD, Policy.ANY);
     if (!shard.equals(Policy.ANY) && (collections.isEmpty() || collections.size() > 1)) {
@@ -149,6 +165,10 @@ public class SearchRateTrigger extends TriggerBase {
 
     Object above = properties.get(ABOVE_RATE_PROP);
     Object below = properties.get(BELOW_RATE_PROP);
+    // back-compat rate prop
+    if (properties.containsKey(BC_RATE_PROP)) {
+      above = properties.get(BC_RATE_PROP);
+    }
     if (above == null && below == null) {
       throw new TriggerValidationException(name, ABOVE_RATE_PROP, "at least one of '" +
       ABOVE_RATE_PROP + "' or '" + BELOW_RATE_PROP + "' must be set");
@@ -197,6 +217,25 @@ public class SearchRateTrigger extends TriggerBase {
         throw new TriggerValidationException(getName(), BELOW_NODE_OP_PROP, "unrecognized value: '" + belowNodeObj + "'");
       }
     }
+  }
+
+  @VisibleForTesting
+  Map<String, Object> getConfig() {
+    Map<String, Object> config = new HashMap<>();
+    config.put("name", name);
+    config.put(COLLECTIONS_PROP, collections);
+    config.put(AutoScalingParams.SHARD, shard);
+    config.put(AutoScalingParams.NODE, node);
+    config.put(METRIC_PROP, metric);
+    config.put(MAX_OPS_PROP, maxOps);
+    config.put(MIN_REPLICAS_PROP, minReplicas);
+    config.put(ABOVE_RATE_PROP, aboveRate);
+    config.put(BELOW_RATE_PROP, belowRate);
+    config.put(ABOVE_OP_PROP, aboveOp);
+    config.put(ABOVE_NODE_OP_PROP, aboveNodeOp);
+    config.put(BELOW_OP_PROP, belowOp);
+    config.put(BELOW_NODE_OP_PROP, belowNodeOp);
+    return config;
   }
 
   @Override
@@ -280,10 +319,7 @@ public class SearchRateTrigger extends TriggerBase {
         shards.forEach((sh, replicas) -> {
           AtomicInteger repl = replPerShard.computeIfAbsent(sh, s -> new AtomicInteger());
           replicas.forEach(replica -> {
-            // skip PULL and non-active replicas
-            if (replica.getType().equals(Replica.Type.PULL)) {
-              return;
-            }
+            // skip non-active replicas
             if (replica.getState() != Replica.State.ACTIVE) {
               return;
             }
@@ -325,12 +361,19 @@ public class SearchRateTrigger extends TriggerBase {
     // check for exceeded rates and filter out those with less than waitFor from previous events
     nodeRates.entrySet().stream()
         .filter(entry -> node.equals(Policy.ANY) || node.equals(entry.getKey()))
-        .filter(entry -> waitForElapsed(entry.getKey(), now, lastNodeEvent))
         .forEach(entry -> {
           if (entry.getValue().get() > aboveRate) {
-            hotNodes.put(entry.getKey(), entry.getValue().get());
+            if (waitForElapsed(entry.getKey(), now, lastNodeEvent)) {
+              hotNodes.put(entry.getKey(), entry.getValue().get());
+            }
           } else if (entry.getValue().get() < belowRate) {
-            coldNodes.put(entry.getKey(), entry.getValue().get());
+            if (waitForElapsed(entry.getKey(), now, lastNodeEvent)) {
+              coldNodes.put(entry.getKey(), entry.getValue().get());
+            }
+          } else {
+            // no violation - clear waitForElapsed
+            // (violation is only valid if it persists throughout waitFor)
+            lastNodeEvent.remove(entry.getKey());
           }
         });
 
@@ -342,23 +385,36 @@ public class SearchRateTrigger extends TriggerBase {
       shardRates.forEach((sh, replicaRates) -> {
         double shardRate = replicaRates.stream()
             .map(r -> {
-              if (waitForElapsed(r.getCollection() + "." + r.getCore(), now, lastReplicaEvent)) {
-                if (((Double)r.getVariable(AutoScalingParams.RATE) > aboveRate)) {
+              String elapsedKey = r.getCollection() + "." + r.getCore();
+              if ((Double)r.getVariable(AutoScalingParams.RATE) > aboveRate) {
+                if (waitForElapsed(elapsedKey, now, lastReplicaEvent)) {
                   hotReplicas.add(r);
-                } else if (((Double)r.getVariable(AutoScalingParams.RATE) < belowRate)) {
+                }
+              } else if ((Double)r.getVariable(AutoScalingParams.RATE) < belowRate) {
+                if (waitForElapsed(elapsedKey, now, lastReplicaEvent)) {
                   coldReplicas.add(r);
                 }
+              } else {
+                // no violation - clear waitForElapsed
+                lastReplicaEvent.remove(elapsedKey);
               }
               return r;
             })
             .mapToDouble(r -> (Double)r.getVariable(AutoScalingParams.RATE)).sum();
-        if (waitForElapsed(coll + "." + sh, now, lastShardEvent) &&
-            (collections.isEmpty() || collections.contains(coll)) &&
+        String elapsedKey = coll + "." + sh;
+        if ((collections.isEmpty() || collections.contains(coll)) &&
             (shard.equals(Policy.ANY) || shard.equals(sh))) {
           if (shardRate > aboveRate) {
-            hotShards.computeIfAbsent(coll, s -> new HashMap<>()).put(sh, shardRate);
+            if (waitForElapsed(elapsedKey, now, lastShardEvent)) {
+              hotShards.computeIfAbsent(coll, s -> new HashMap<>()).put(sh, shardRate);
+            }
           } else if (shardRate < belowRate) {
-            coldShards.computeIfAbsent(coll, s -> new HashMap<>()).put(sh, shardRate);
+            if (waitForElapsed(elapsedKey, now, lastShardEvent)) {
+              coldShards.computeIfAbsent(coll, s -> new HashMap<>()).put(sh, shardRate);
+            }
+          } else {
+            // no violation - clear waitForElapsed
+            lastShardEvent.remove(elapsedKey);
           }
         }
       });
@@ -370,12 +426,18 @@ public class SearchRateTrigger extends TriggerBase {
       double total = shardRates.entrySet().stream()
           .mapToDouble(e -> e.getValue().stream()
               .mapToDouble(r -> (Double)r.getVariable(AutoScalingParams.RATE)).sum()).sum();
-      if (waitForElapsed(coll, now, lastCollectionEvent) &&
-          (collections.isEmpty() || collections.contains(coll))) {
+      if (collections.isEmpty() || collections.contains(coll)) {
         if (total > aboveRate) {
-          hotCollections.put(coll, total);
+          if (waitForElapsed(coll, now, lastCollectionEvent)) {
+            hotCollections.put(coll, total);
+          }
         } else if (total < belowRate) {
-          coldCollections.put(coll, total);
+          if (waitForElapsed(coll, now, lastCollectionEvent)) {
+            coldCollections.put(coll, total);
+          }
+        } else {
+          // no violation - clear waitForElapsed
+          lastCollectionEvent.remove(coll);
         }
       }
     });
