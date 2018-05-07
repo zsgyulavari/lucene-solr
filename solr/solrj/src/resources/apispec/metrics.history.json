@@ -1,0 +1,24 @@
+{
+  "documentation": "https://lucene.apache.org/solr/guide/metrics-reporting.html",
+  "description": "Metrics history handler allows retrieving samples of past metrics recorded in the .system collection.",
+  "methods": [
+    "GET"
+  ],
+  "url": {
+    "paths": [
+      "/cluster/metrics/history"
+    ],
+    "params": {
+      "collection": {
+        "type": "string",
+        "description": "Collection where metrics history is stored, '.system' by default.",
+        "default": ".system"
+      },
+      "q": {
+        "type": "string",
+        "description": "Arbitrary query to limit the selected metrics.",
+        "default": "*:*"
+      }
+    }
+  }
+}

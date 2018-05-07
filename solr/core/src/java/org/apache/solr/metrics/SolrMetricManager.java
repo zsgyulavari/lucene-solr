@@ -34,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
@@ -48,6 +49,7 @@ import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.MetricSet;
 import com.codahale.metrics.SharedMetricRegistries;
 import com.codahale.metrics.Timer;
+import org.apache.solr.common.util.IOUtils;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.core.MetricsConfig;
@@ -55,6 +57,7 @@ import org.apache.solr.core.PluginInfo;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.core.SolrInfoBean;
 import org.apache.solr.core.SolrResourceLoader;
+import org.rrd4j.core.RrdDb;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -96,6 +99,8 @@ public class SolrMetricManager {
   private final ConcurrentMap<String, MetricRegistry> registries = new ConcurrentHashMap<>();
 
   private final Map<String, Map<String, SolrMetricReporter>> reporters = new HashMap<>();
+
+  private final ConcurrentHashMap<String, RrdDb> metricHistories = new ConcurrentHashMap<>();
 
   private final Lock reportersLock = new ReentrantLock();
   private final Lock swapLock = new ReentrantLock();
@@ -423,18 +428,38 @@ public class SolrMetricManager {
     } else {
       swapLock.lock();
       try {
-        return getOrCreate(registries, registry);
+        return getOrCreateRegistry(registries, registry);
       } finally {
         swapLock.unlock();
       }
     }
   }
 
-  private static MetricRegistry getOrCreate(ConcurrentMap<String, MetricRegistry> map, String registry) {
+  private static MetricRegistry getOrCreateRegistry(ConcurrentMap<String, MetricRegistry> map, String registry) {
     final MetricRegistry existing = map.get(registry);
     if (existing == null) {
       final MetricRegistry created = new MetricRegistry();
       final MetricRegistry raced = map.putIfAbsent(registry, created);
+      if (raced == null) {
+        return created;
+      } else {
+        return raced;
+      }
+    } else {
+      return existing;
+    }
+  }
+
+  public RrdDb getOrCreateMetricHistory(String registry, Supplier<RrdDb> supplier) {
+    registry = overridableRegistryName(registry);
+    final RrdDb existing = metricHistories.get(registry);
+    if (existing == null) {
+      final RrdDb created = supplier.get();
+      if (created == null) {
+        // maybe someone else succeeded
+        return metricHistories.get(registry);
+      }
+      final RrdDb raced = metricHistories.putIfAbsent(registry, created);
       if (raced == null) {
         return created;
       } else {
@@ -464,6 +489,10 @@ public class SolrMetricManager {
         swapLock.unlock();
       }
     }
+    RrdDb db = metricHistories.remove(registry);
+    if (db != null) {
+      IOUtils.closeQuietly(db);
+    }
   }
 
   /**
@@ -490,11 +519,19 @@ public class SolrMetricManager {
       }
       MetricRegistry reg1 = registries.remove(registry1);
       MetricRegistry reg2 = registries.remove(registry2);
+      RrdDb db1 = metricHistories.remove(registry1);
+      RrdDb db2 = metricHistories.remove(registry2);
       if (reg2 != null) {
         registries.put(registry1, reg2);
       }
       if (reg1 != null) {
         registries.put(registry2, reg1);
+      }
+      if (db2 != null) {
+        metricHistories.put(registry1, db2);
+      }
+      if (db1 != null) {
+        metricHistories.put(registry2, db1);
       }
     } finally {
       swapLock.unlock();

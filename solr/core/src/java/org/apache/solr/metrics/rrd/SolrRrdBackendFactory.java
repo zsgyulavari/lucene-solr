@@ -19,20 +19,18 @@ package org.apache.solr.metrics.rrd;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
+import org.apache.solr.client.solrj.io.SolrClientCache;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrCloseable;
 import org.apache.solr.common.SolrDocument;
@@ -61,24 +59,23 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
   public static final int DEFAULT_MAX_DBS = 500;
 
   public static final String ID_PREFIX = "rrd_";
-  public static final String DOC_TYPE = "rrd";
+  public static final String DOC_TYPE = "metrics_rrd";
 
   public static final String DATA_FIELD = "data_bin";
 
-  private final CoreContainer coreContainer;
+  private final SolrClient solrClient;
   private final String collection;
   private ScheduledThreadPoolExecutor syncService;
   private int syncPeriod = DEFAULT_SYNC_PERIOD;
   private volatile boolean closed = false;
-  private boolean logMissingSystemColl = true;
 
   private final Map<String, SolrRrdBackend> backends = new ConcurrentHashMap<>();
 
-  public SolrRrdBackendFactory(CoreContainer coreContainer, String collection) {
-    this.coreContainer = coreContainer;
+  public SolrRrdBackendFactory(SolrClient solrClient, String collection) {
+    this.solrClient = solrClient;
     this.collection = collection;
-    syncService = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(1,
-        new DefaultSolrThreadFactory("SolrRrdBackendFactory-syncService"));
+    syncService = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(2,
+        new DefaultSolrThreadFactory("SolrRrdBackendFactory"));
     syncService.setRemoveOnCancelPolicy(true);
     syncService.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
     syncService.scheduleWithFixedDelay(() -> maybeSyncBackends(), syncPeriod, syncPeriod, TimeUnit.SECONDS);
@@ -113,23 +110,12 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     }
   }
 
-  CloudSolrClient getSolrClient() throws SolrException {
-    if (this.coreContainer.isZooKeeperAware()) {
-      return new CloudSolrClient.Builder(
-          Collections.singletonList(coreContainer.getZkController().getZkServerAddress()),
-          Optional.empty())
-          .build();
-    } else {
-      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "SolrRrd is not supported in non-cloud mode");
-    }
-  }
-
   byte[] getData(String path) throws IOException {
-    try (CloudSolrClient client = getSolrClient()) {
+    try {
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.add(CommonParams.Q, "{!term f=id}" + ID_PREFIX + path);
       params.add(CommonParams.FQ, CommonParams.TYPE + ":" + DOC_TYPE);
-      QueryResponse rsp = client.query(CollectionAdminParams.SYSTEM_COLL, params);
+      QueryResponse rsp = solrClient.query(collection, params);
       SolrDocumentList docs = rsp.getResults();
       if (docs == null || docs.isEmpty()) {
         return null;
@@ -158,14 +144,14 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
 
   public List<String> list() throws IOException {
     ArrayList<String> names = new ArrayList<>();
-    try (CloudSolrClient client = getSolrClient()) {
+    try {
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.add(CommonParams.Q, "*:*");
       params.add(CommonParams.FQ, CommonParams.TYPE + ":" + DOC_TYPE);
       params.add(CommonParams.FL, "id");
       params.add(CommonParams.SORT, "id asc");
       params.add(CommonParams.ROWS, String.valueOf(DEFAULT_MAX_DBS));
-      QueryResponse rsp = client.query(CollectionAdminParams.SYSTEM_COLL, params);
+      QueryResponse rsp = solrClient.query(collection, params);
       SolrDocumentList docs = rsp.getResults();
       if (docs != null) {
         docs.forEach(d -> names.add(((String)d.getFieldValue("id")).substring(ID_PREFIX.length())));
@@ -173,7 +159,6 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     } catch (SolrServerException e) {
       log.warn("Error retrieving RRD list", e);
     }
-    // add all doc id-s
     return names;
   }
 
@@ -183,8 +168,8 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
       IOUtils.closeQuietly(backend);
     }
     // remove Solr doc
-    try (CloudSolrClient client = getSolrClient()) {
-      client.deleteByQuery(CollectionAdminParams.SYSTEM_COLL, "{!term f=id}" + ID_PREFIX + path);
+    try {
+      solrClient.deleteByQuery(collection, "{!term f=id}" + ID_PREFIX + path);
     } catch (SolrServerException e) {
       log.warn("Error deleting RRD for path " + path, e);
     }
@@ -196,7 +181,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     }
     Map<String, byte[]> syncData = new HashMap<>();
     backends.forEach((path, backend) -> {
-      byte[] data = backend.maybeSync();
+      byte[] data = backend.getSyncData();
       if (data != null) {
         syncData.put(backend.getPath(), data);
       }
@@ -205,28 +190,20 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
       return;
     }
     // write updates
-    try (CloudSolrClient client = getSolrClient()) {
-      ClusterState clusterState = client.getClusterStateProvider().getClusterState();
-      if (clusterState.getCollectionOrNull(CollectionAdminParams.SYSTEM_COLL) == null) {
-        if (logMissingSystemColl) {
-          log.warn("Collection " + CollectionAdminParams.SYSTEM_COLL + " missing, not persisting updates");
-          logMissingSystemColl = false;
-        }
-      }
-      logMissingSystemColl = true;
+    try {
       syncData.forEach((path, data) -> {
         SolrInputDocument doc = new SolrInputDocument();
         doc.setField("id", ID_PREFIX + path);
         doc.addField(CommonParams.TYPE, DOC_TYPE);
         doc.addField(DATA_FIELD, data);
         try {
-          client.add(CollectionAdminParams.SYSTEM_COLL, doc);
+          solrClient.add(collection, doc);
         } catch (SolrServerException | IOException e) {
           log.warn("Error updating RRD data for " + path, e);
         }
       });
       try {
-        client.commit(CollectionAdminParams.SYSTEM_COLL);
+        solrClient.commit(collection);
       } catch (SolrServerException e) {
         log.warn("Error committing RRD data updates", e);
       }
@@ -237,12 +214,12 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
 
   @Override
   protected boolean exists(String path) throws IOException {
-    try (CloudSolrClient client = getSolrClient()) {
+    try {
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.add(CommonParams.Q, "{!term f=id}" + ID_PREFIX + path);
       params.add(CommonParams.FQ, CommonParams.TYPE + ":" + DOC_TYPE);
       params.add(CommonParams.FL, "id");
-      QueryResponse rsp = client.query(CollectionAdminParams.SYSTEM_COLL, params);
+      QueryResponse rsp = solrClient.query(collection, params);
       SolrDocumentList docs = rsp.getResults();
       if (docs == null || docs.isEmpty()) {
         return false;

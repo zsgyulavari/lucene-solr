@@ -474,6 +474,10 @@ public class CoreContainer {
     return metricManager;
   }
 
+  public MetricsHandler getMetricsHandler() {
+    return metricsHandler;
+  }
+
   //-------------------------------------------------------------------
   // Initialization / Cleanup
   //-------------------------------------------------------------------
