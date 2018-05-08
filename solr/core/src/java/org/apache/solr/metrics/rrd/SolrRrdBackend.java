@@ -101,6 +101,10 @@ public class SolrRrdBackend extends RrdByteArrayBackend implements Closeable {
     }
   }
 
+  public void markClean() {
+    dirty = false;
+  }
+
   @Override
   public void close() throws IOException {
     super.close();

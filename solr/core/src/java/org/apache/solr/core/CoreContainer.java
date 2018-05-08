@@ -25,6 +25,7 @@ import static org.apache.solr.common.params.CommonParams.CONFIGSETS_HANDLER_PATH
 import static org.apache.solr.common.params.CommonParams.CORES_HANDLER_PATH;
 import static org.apache.solr.common.params.CommonParams.HEALTH_CHECK_HANDLER_PATH;
 import static org.apache.solr.common.params.CommonParams.INFO_HANDLER_PATH;
+import static org.apache.solr.common.params.CommonParams.METRICS_HISTORY_PATH;
 import static org.apache.solr.common.params.CommonParams.METRICS_PATH;
 import static org.apache.solr.common.params.CommonParams.ZK_PATH;
 import static org.apache.solr.security.AuthenticationPlugin.AUTHENTICATION_PLUGIN_PROP;
@@ -56,6 +57,7 @@ import org.apache.http.client.CredentialsProvider;
 import org.apache.http.config.Lookup;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.store.Directory;
+import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.impl.HttpClientUtil;
 import org.apache.solr.client.solrj.impl.SolrHttpClientBuilder;
 import org.apache.solr.client.solrj.impl.SolrHttpClientContextBuilder;
@@ -87,6 +89,7 @@ import org.apache.solr.handler.admin.HealthCheckHandler;
 import org.apache.solr.handler.admin.InfoHandler;
 import org.apache.solr.handler.admin.MetricsCollectorHandler;
 import org.apache.solr.handler.admin.MetricsHandler;
+import org.apache.solr.handler.admin.MetricsHistoryHandler;
 import org.apache.solr.handler.admin.SecurityConfHandler;
 import org.apache.solr.handler.admin.SecurityConfHandlerLocal;
 import org.apache.solr.handler.admin.SecurityConfHandlerZk;
@@ -189,6 +192,8 @@ public class CoreContainer {
   protected String metricTag = Integer.toHexString(hashCode());
 
   protected MetricsHandler metricsHandler;
+
+  protected MetricsHistoryHandler metricsHistoryHandler;
 
   protected MetricsCollectorHandler metricsCollectorHandler;
 
@@ -540,7 +545,20 @@ public class CoreContainer {
     infoHandler        = createHandler(INFO_HANDLER_PATH, cfg.getInfoHandlerClass(), InfoHandler.class);
     coreAdminHandler   = createHandler(CORES_HANDLER_PATH, cfg.getCoreAdminHandlerClass(), CoreAdminHandler.class);
     configSetsHandler = createHandler(CONFIGSETS_HANDLER_PATH, cfg.getConfigSetsHandlerClass(), ConfigSetsHandler.class);
-    metricsHandler = createHandler(METRICS_PATH, MetricsHandler.class.getName(), MetricsHandler.class);
+
+    // metricsHistoryHandler uses metricsHandler, so create it first
+    metricsHandler = new MetricsHandler(metricManager);
+    containerHandlers.put(METRICS_PATH, metricsHandler);
+    metricsHandler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), metricTag, METRICS_PATH);
+
+    if (isZooKeeperAware()) {
+      metricsHistoryHandler = new MetricsHistoryHandler(metricManager, metricsHandler,
+          new CloudSolrClient.Builder(Collections.singletonList(getZkController().getZkServerAddress()), Optional.empty())
+      .withHttpClient(updateShardHandler.getDefaultHttpClient()).build(), getZkController().getSolrCloudManager());
+      containerHandlers.put(METRICS_HISTORY_PATH, metricsHistoryHandler);
+      metricsHistoryHandler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), metricTag, METRICS_HISTORY_PATH);
+    }
+
     autoscalingHistoryHandler = createHandler(AUTOSCALING_HISTORY_PATH, AutoscalingHistoryHandler.class.getName(), AutoscalingHistoryHandler.class);
     metricsCollectorHandler = createHandler(MetricsCollectorHandler.HANDLER_PATH, MetricsCollectorHandler.class.getName(), MetricsCollectorHandler.class);
     // may want to add some configuration here in the future
@@ -764,6 +782,9 @@ public class CoreContainer {
         zkSys.zkController.removeEphemeralLiveNode();
       } catch (Exception e) {
         log.warn("Error removing live node. Continuing to close CoreContainer", e);
+      }
+      if (metricsHistoryHandler != null) {
+        IOUtils.closeQuietly(metricsHistoryHandler.getSolrClient());
       }
       if (metricManager != null) {
         metricManager.closeReporters(SolrMetricManager.getRegistryName(SolrInfoBean.Group.cluster));

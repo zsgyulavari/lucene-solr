@@ -18,10 +18,17 @@ package org.apache.solr.metrics.rrd;
 
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
+import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -42,6 +49,7 @@ import org.apache.solr.common.params.CollectionAdminParams;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.util.IOUtils;
+import org.apache.solr.common.util.TimeSource;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.util.DefaultSolrThreadFactory;
 import org.rrd4j.core.RrdBackend;
@@ -64,27 +72,48 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
   public static final String DATA_FIELD = "data_bin";
 
   private final SolrClient solrClient;
+  private final TimeSource timeSource;
   private final String collection;
   private ScheduledThreadPoolExecutor syncService;
-  private int syncPeriod = DEFAULT_SYNC_PERIOD;
   private volatile boolean closed = false;
 
   private final Map<String, SolrRrdBackend> backends = new ConcurrentHashMap<>();
 
-  public SolrRrdBackendFactory(SolrClient solrClient, String collection) {
+  public SolrRrdBackendFactory(SolrClient solrClient, String collection, int syncPeriod, TimeSource timeSource) {
     this.solrClient = solrClient;
+    this.timeSource = timeSource;
     this.collection = collection;
     syncService = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(2,
         new DefaultSolrThreadFactory("SolrRrdBackendFactory"));
     syncService.setRemoveOnCancelPolicy(true);
     syncService.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
-    syncService.scheduleWithFixedDelay(() -> maybeSyncBackends(), syncPeriod, syncPeriod, TimeUnit.SECONDS);
+    syncService.scheduleWithFixedDelay(() -> maybeSyncBackends(),
+        timeSource.convertDelay(TimeUnit.SECONDS, syncPeriod, TimeUnit.MILLISECONDS),
+        timeSource.convertDelay(TimeUnit.SECONDS, syncPeriod, TimeUnit.MILLISECONDS),
+        TimeUnit.MILLISECONDS);
   }
 
   private void ensureOpen() throws IOException {
     if (closed) {
       throw new IOException("Factory already closed");
     }
+  }
+
+  @Override
+  public boolean canStore(URI uri) {
+    if (uri == null) {
+      return false;
+    }
+    if (uri.getScheme().toUpperCase(Locale.ROOT).equals(getName())) {
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  @Override
+  public String getPath(URI uri) {
+    return uri.getSchemeSpecificPart();
   }
 
   @Override
@@ -143,7 +172,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
   }
 
   public List<String> list() throws IOException {
-    ArrayList<String> names = new ArrayList<>();
+    Set<String> names = new HashSet<>();
     try {
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.add(CommonParams.Q, "*:*");
@@ -159,7 +188,11 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     } catch (SolrServerException e) {
       log.warn("Error retrieving RRD list", e);
     }
-    return names;
+    // add in-memory backends not yet stored
+    names.addAll(backends.keySet());
+    ArrayList<String> list = new ArrayList<>(names);
+    Collections.sort(list);
+    return list;
   }
 
   public void remove(String path) throws IOException {
@@ -179,6 +212,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     if (closed) {
       return;
     }
+    log.info("-- maybe sync backends: " + backends.keySet());
     Map<String, byte[]> syncData = new HashMap<>();
     backends.forEach((path, backend) -> {
       byte[] data = backend.getSyncData();
@@ -189,6 +223,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     if (syncData.isEmpty()) {
       return;
     }
+    log.info("-- syncing " + syncData.keySet());
     // write updates
     try {
       syncData.forEach((path, data) -> {
@@ -196,6 +231,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
         doc.setField("id", ID_PREFIX + path);
         doc.addField(CommonParams.TYPE, DOC_TYPE);
         doc.addField(DATA_FIELD, data);
+        doc.setField("timestamp", new Date(TimeUnit.MILLISECONDS.convert(timeSource.getEpochTimeNs(), TimeUnit.NANOSECONDS)));
         try {
           solrClient.add(collection, doc);
         } catch (SolrServerException | IOException e) {
@@ -207,6 +243,12 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
       } catch (SolrServerException e) {
         log.warn("Error committing RRD data updates", e);
       }
+      syncData.forEach((path, data) -> {
+        SolrRrdBackend backend = backends.get(path);
+        if (backend != null) {
+          backend.markClean();
+        }
+      });
     } catch (IOException e) {
       log.warn("Error sending RRD data updates", e);
     }
@@ -214,6 +256,10 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
 
   @Override
   protected boolean exists(String path) throws IOException {
+    // check in-memory backends first
+    if (backends.containsKey(path)) {
+      return true;
+    }
     try {
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.add(CommonParams.Q, "{!term f=id}" + ID_PREFIX + path);
@@ -249,7 +295,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
   }
 
   @Override
-  public void close() throws IOException {
+  public void close() {
     closed = true;
     backends.forEach((p, b) -> IOUtils.closeQuietly(b));
     backends.clear();

@@ -54,7 +54,6 @@ import org.apache.solr.util.stats.MetricUtils;
  * Request handler to return metrics
  */
 public class MetricsHandler extends RequestHandlerBase implements PermissionNameProvider {
-  final CoreContainer container;
   final SolrMetricManager metricManager;
 
   public static final String COMPACT_PARAM = "compact";
@@ -71,13 +70,11 @@ public class MetricsHandler extends RequestHandlerBase implements PermissionName
   private static final Pattern KEY_REGEX = Pattern.compile("(?<!" + Pattern.quote("\\") + ")" + Pattern.quote(":"));
 
   public MetricsHandler() {
-    this.container = null;
     this.metricManager = null;
   }
 
-  public MetricsHandler(CoreContainer container) {
-    this.container = container;
-    this.metricManager = this.container.getMetricManager();
+  public MetricsHandler(SolrMetricManager metricManager) {
+    this.metricManager = metricManager;
   }
 
   @Override
@@ -87,8 +84,8 @@ public class MetricsHandler extends RequestHandlerBase implements PermissionName
 
   @Override
   public void handleRequestBody(SolrQueryRequest req, SolrQueryResponse rsp) throws Exception {
-    if (container == null) {
-      throw new SolrException(SolrException.ErrorCode.INVALID_STATE, "Core container instance not initialized");
+    if (metricManager == null) {
+      throw new SolrException(SolrException.ErrorCode.INVALID_STATE, "SolrMetricManager instance not initialized");
     }
 
     handleRequest(req.getParams(), (k, v) -> rsp.add(k, v));
@@ -237,7 +234,7 @@ public class MetricsHandler extends RequestHandlerBase implements PermissionName
   public Set<String> parseRegistries(String[] groupStr, String[] registryStr) {
     if ((groupStr == null || groupStr.length == 0) && (registryStr == null || registryStr.length == 0)) {
       // return all registries
-      return container.getMetricManager().registryNames();
+      return metricManager.registryNames();
     }
     boolean allRegistries = false;
     Set<String> initialPrefixes = Collections.emptySet();
@@ -253,7 +250,7 @@ public class MetricsHandler extends RequestHandlerBase implements PermissionName
           initialPrefixes.add(SolrMetricManager.overridableRegistryName(s.trim()));
         }
         if (allRegistries) {
-          return container.getMetricManager().registryNames();
+          return metricManager.registryNames();
         }
       }
     }
@@ -272,12 +269,12 @@ public class MetricsHandler extends RequestHandlerBase implements PermissionName
           initialPrefixes.add(SolrMetricManager.overridableRegistryName(s.trim()));
         }
         if (allRegistries) {
-          return container.getMetricManager().registryNames();
+          return metricManager.registryNames();
         }
       }
     }
     Set<String> validRegistries = new HashSet<>();
-    for (String r : container.getMetricManager().registryNames()) {
+    for (String r : metricManager.registryNames()) {
       for (String prefix : initialPrefixes) {
         if (r.startsWith(prefix)) {
           validRegistries.add(r);

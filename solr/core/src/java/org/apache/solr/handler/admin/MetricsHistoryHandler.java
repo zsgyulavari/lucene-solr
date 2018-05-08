@@ -16,7 +16,9 @@
  */
 package org.apache.solr.handler.admin;
 
+import java.io.Closeable;
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -34,7 +36,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.solr.api.Api;
 import org.apache.solr.api.ApiBag;
+import org.apache.solr.client.solrj.SolrClient;
+import org.apache.solr.client.solrj.cloud.SolrCloudManager;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
+import org.apache.solr.common.cloud.ClusterState;
 import org.apache.solr.common.params.CollectionAdminParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.util.NamedList;
@@ -55,11 +60,14 @@ import org.rrd4j.core.RrdBackendFactory;
 import org.rrd4j.core.RrdDb;
 import org.rrd4j.core.RrdDef;
 import org.rrd4j.core.Sample;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
  */
-public class MetricsHistoryHandler extends RequestHandlerBase implements PermissionNameProvider {
+public class MetricsHistoryHandler extends RequestHandlerBase implements PermissionNameProvider, Closeable {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   public static final Set<String> DEFAULT_CORE_COUNTERS = new HashSet<String>() {{
     add("QUERY./select.requests");
@@ -79,28 +87,32 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
   }};
 
   public static final int DEFAULT_COLLECT_PERIOD = 60;
-  public static final String URI_PREFIX = "solr:///";
+  public static final String URI_PREFIX = "solr://";
 
   private final SolrRrdBackendFactory factory;
+  private final SolrClient solrClient;
   private final MetricsHandler metricsHandler;
   private final SolrMetricManager metricManager;
+  private final SolrCloudManager cloudManager;
   private final ScheduledThreadPoolExecutor collectService;
   private final TimeSource timeSource;
   private final int collectPeriod;
   private final Map<String, Set<String>> counters = new HashMap<>();
   private final Map<String, Set<String>> gauges = new HashMap<>();
 
-  public MetricsHistoryHandler(CoreContainer coreContainer) {
-    factory = new SolrRrdBackendFactory(new CloudSolrClient.Builder(
-        Collections.singletonList(coreContainer.getZkController().getZkServerAddress()),
-        Optional.empty())
-        .withHttpClient(coreContainer.getUpdateShardHandler().getHttpClient())
-        .build(), CollectionAdminParams.SYSTEM_COLL);
+  private boolean logMissingCollection = true;
+
+  public MetricsHistoryHandler(SolrMetricManager metricManager, MetricsHandler metricsHandler,
+                               SolrClient solrClient, SolrCloudManager cloudManager) {
+    factory = new SolrRrdBackendFactory(solrClient, CollectionAdminParams.SYSTEM_COLL,
+        SolrRrdBackendFactory.DEFAULT_SYNC_PERIOD, cloudManager.getTimeSource());
     RrdBackendFactory.registerAndSetAsDefaultFactory(factory);
-    metricsHandler = coreContainer.getMetricsHandler();
-    metricManager = coreContainer.getMetricManager();
+    this.solrClient = solrClient;
+    this.metricsHandler = metricsHandler;
+    this.metricManager = metricManager;
+    this.cloudManager = cloudManager;
     collectPeriod = DEFAULT_COLLECT_PERIOD;
-    timeSource = coreContainer.getZkController().getSolrCloudManager().getTimeSource();
+    this.timeSource = cloudManager.getTimeSource();
 
     counters.put(Group.core.toString(), DEFAULT_CORE_COUNTERS);
     counters.put(Group.node.toString(), Collections.emptySet());
@@ -116,7 +128,26 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     collectService.scheduleWithFixedDelay(() -> collectMetrics(), collectPeriod, collectPeriod, TimeUnit.SECONDS);
   }
 
+  public SolrClient getSolrClient() {
+    return solrClient;
+  }
+
   private void collectMetrics() {
+    // check that .system exists
+    try {
+      ClusterState clusterState = cloudManager.getClusterStateProvider().getClusterState();
+      if (clusterState.getCollectionOrNull(CollectionAdminParams.SYSTEM_COLL) == null) {
+        if (logMissingCollection) {
+          log.warn("Missing " + CollectionAdminParams.SYSTEM_COLL + ", skipping metrics collection");
+          logMissingCollection = false;
+        }
+        return;
+      }
+    } catch (Exception e) {
+      log.warn("Error getting cluster state, skipping metrics collection", e);
+      return;
+    }
+    logMissingCollection = true;
     // get metrics
     for (Group group : Arrays.asList(Group.core, Group.node, Group.jvm)) {
       ModifiableSolrParams params = new ModifiableSolrParams();
@@ -148,6 +179,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
             if (db == null) {
               continue;
             }
+            // set the timestamp
             Sample s = db.createSample(TimeUnit.MILLISECONDS.convert(timeSource.getEpochTimeNs(), TimeUnit.NANOSECONDS));
             NamedList<Object> values = (NamedList<Object>)entry.getValue();
             AtomicBoolean dirty = new AtomicBoolean(false);
@@ -179,21 +211,38 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
   RrdDef createDef(String registry, Group group) {
     registry = SolrMetricManager.overridableRegistryName(registry);
 
+    // base sampling period is collectPeriod - samples more frequent than
+    // that will be dropped, samples less frequent will be interpolated
     RrdDef def = new RrdDef(URI_PREFIX + registry, collectPeriod);
     def.setStartTime(TimeUnit.MILLISECONDS.convert(timeSource.getEpochTimeNs(), TimeUnit.NANOSECONDS));
 
     // add datasources
+
+    // use NaN when more than 1 sample is missing
     counters.get(group.toString()).forEach(c ->
         def.addDatasource(c, DsType.COUNTER, collectPeriod * 2, Double.NaN, Double.NaN));
     gauges.get(group.toString()).forEach(g ->
         def.addDatasource(g, DsType.GAUGE, collectPeriod * 2, Double.NaN, Double.NaN));
 
     // add archives
+
+    // use AVERAGE consolidation,
+    // use NaN when >50% samples are missing
     def.addArchive(ConsolFun.AVERAGE, 0.5, 1, 120); // 2 hours
     def.addArchive(ConsolFun.AVERAGE, 0.5, 10, 288); // 48 hours
     def.addArchive(ConsolFun.AVERAGE, 0.5, 60, 336); // 2 weeks
     def.addArchive(ConsolFun.AVERAGE, 0.5, 240, 180); // 2 months
     return def;
+  }
+
+  @Override
+  public void close() {
+    if (collectService != null) {
+      collectService.shutdown();
+    }
+    if (factory != null) {
+      factory.close();
+    }
   }
 
   @Override
