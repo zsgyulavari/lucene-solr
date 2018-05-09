@@ -100,6 +100,7 @@ import org.apache.solr.logging.MDCLoggingContext;
 import org.apache.solr.metrics.SolrCoreMetricManager;
 import org.apache.solr.metrics.SolrMetricManager;
 import org.apache.solr.metrics.SolrMetricProducer;
+import org.apache.solr.metrics.rrd.SolrRrdBackendFactory;
 import org.apache.solr.request.SolrRequestHandler;
 import org.apache.solr.search.SolrFieldCacheBean;
 import org.apache.solr.security.AuthenticationPlugin;
@@ -552,9 +553,10 @@ public class CoreContainer {
     metricsHandler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), metricTag, METRICS_PATH);
 
     if (isZooKeeperAware()) {
-      metricsHistoryHandler = new MetricsHistoryHandler(metricManager, metricsHandler,
+      metricsHistoryHandler = new MetricsHistoryHandler(metricsHandler,
           new CloudSolrClient.Builder(Collections.singletonList(getZkController().getZkServerAddress()), Optional.empty())
-      .withHttpClient(updateShardHandler.getDefaultHttpClient()).build(), getZkController().getSolrCloudManager());
+      .withHttpClient(updateShardHandler.getDefaultHttpClient()).build(), getZkController().getSolrCloudManager(),
+          MetricsHistoryHandler.DEFAULT_COLLECT_PERIOD, SolrRrdBackendFactory.DEFAULT_SYNC_PERIOD);
       containerHandlers.put(METRICS_HISTORY_PATH, metricsHistoryHandler);
       metricsHistoryHandler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), metricTag, METRICS_HISTORY_PATH);
     }
@@ -785,6 +787,7 @@ public class CoreContainer {
       }
       if (metricsHistoryHandler != null) {
         IOUtils.closeQuietly(metricsHistoryHandler.getSolrClient());
+        metricsHistoryHandler.close();
       }
       if (metricManager != null) {
         metricManager.closeReporters(SolrMetricManager.getRegistryName(SolrInfoBean.Group.cluster));

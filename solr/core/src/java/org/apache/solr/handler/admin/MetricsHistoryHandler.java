@@ -34,12 +34,15 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.solr.api.Api;
 import org.apache.solr.api.ApiBag;
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.cloud.SolrCloudManager;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.common.cloud.ClusterState;
+import org.apache.solr.common.cloud.DocCollection;
+import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.params.CollectionAdminParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.util.NamedList;
@@ -71,7 +74,6 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
 
   public static final Set<String> DEFAULT_CORE_COUNTERS = new HashSet<String>() {{
     add("QUERY./select.requests");
-    add("INDEX.sizeInBytes");
     add("UPDATE./update.requests");
   }};
   public static final Set<String> DEFAULT_CORE_GAUGES = new HashSet<String>() {{
@@ -87,12 +89,11 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
   }};
 
   public static final int DEFAULT_COLLECT_PERIOD = 60;
-  public static final String URI_PREFIX = "solr://";
+  public static final String URI_PREFIX = "solr:";
 
   private final SolrRrdBackendFactory factory;
   private final SolrClient solrClient;
   private final MetricsHandler metricsHandler;
-  private final SolrMetricManager metricManager;
   private final SolrCloudManager cloudManager;
   private final ScheduledThreadPoolExecutor collectService;
   private final TimeSource timeSource;
@@ -102,16 +103,24 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
 
   private boolean logMissingCollection = true;
 
-  public MetricsHistoryHandler(SolrMetricManager metricManager, MetricsHandler metricsHandler,
-                               SolrClient solrClient, SolrCloudManager cloudManager) {
-    factory = new SolrRrdBackendFactory(solrClient, CollectionAdminParams.SYSTEM_COLL,
-        SolrRrdBackendFactory.DEFAULT_SYNC_PERIOD, cloudManager.getTimeSource());
-    RrdBackendFactory.registerAndSetAsDefaultFactory(factory);
+  public MetricsHistoryHandler(MetricsHandler metricsHandler,
+                               SolrClient solrClient, SolrCloudManager cloudManager, int collectPeriod, int syncPeriod) {
+    log.info("Created " + hashCode());
+    synchronized (this) {
+      SolrRrdBackendFactory f;
+      try {
+        f = (SolrRrdBackendFactory)RrdBackendFactory.getFactory(SolrRrdBackendFactory.NAME);
+      } catch (IllegalArgumentException e) { // need to register
+        f = new SolrRrdBackendFactory(solrClient, CollectionAdminParams.SYSTEM_COLL,
+            syncPeriod, cloudManager.getTimeSource());
+        RrdBackendFactory.registerAndSetAsDefaultFactory(f);
+      }
+      factory = f;
+    }
     this.solrClient = solrClient;
     this.metricsHandler = metricsHandler;
-    this.metricManager = metricManager;
     this.cloudManager = cloudManager;
-    collectPeriod = DEFAULT_COLLECT_PERIOD;
+    this.collectPeriod = collectPeriod;
     this.timeSource = cloudManager.getTimeSource();
 
     counters.put(Group.core.toString(), DEFAULT_CORE_COUNTERS);
@@ -121,27 +130,56 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     gauges.put(Group.node.toString(), DEFAULT_NODE_GAUGES);
     gauges.put(Group.jvm.toString(), DEFAULT_JVM_GAUGES);
 
-    collectService = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(2,
-        new DefaultSolrThreadFactory("SolrRrdBackendFactory"));
+    collectService = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(1,
+        new DefaultSolrThreadFactory("MetricsHistoryHandler-" + hashCode()));
     collectService.setRemoveOnCancelPolicy(true);
     collectService.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
-    collectService.scheduleWithFixedDelay(() -> collectMetrics(), collectPeriod, collectPeriod, TimeUnit.SECONDS);
+    collectService.scheduleWithFixedDelay(() -> collectMetrics(),
+        timeSource.convertDelay(TimeUnit.SECONDS, collectPeriod, TimeUnit.MILLISECONDS),
+        timeSource.convertDelay(TimeUnit.SECONDS, collectPeriod, TimeUnit.MILLISECONDS),
+        TimeUnit.MILLISECONDS);
   }
 
   public SolrClient getSolrClient() {
     return solrClient;
   }
 
+  @VisibleForTesting
+  public SolrRrdBackendFactory getFactory() {
+    return factory;
+  }
+
   private void collectMetrics() {
+    if (metricManager == null) {
+      // not inited yet
+      return;
+    }
+    log.info("-- collectMetrics");
     // check that .system exists
     try {
+      if (cloudManager.isClosed() || Thread.interrupted()) {
+        return;
+      }
       ClusterState clusterState = cloudManager.getClusterStateProvider().getClusterState();
-      if (clusterState.getCollectionOrNull(CollectionAdminParams.SYSTEM_COLL) == null) {
+      DocCollection systemColl = clusterState.getCollectionOrNull(CollectionAdminParams.SYSTEM_COLL);
+      if (systemColl == null) {
         if (logMissingCollection) {
           log.warn("Missing " + CollectionAdminParams.SYSTEM_COLL + ", skipping metrics collection");
-          logMissingCollection = false;
+          //logMissingCollection = false;
         }
         return;
+      } else {
+        boolean ready = false;
+        for (Replica r : systemColl.getReplicas()) {
+          if (r.isActive(clusterState.getLiveNodes())) {
+            ready = true;
+            break;
+          }
+        }
+        if (!ready) {
+          log.debug(CollectionAdminParams.SYSTEM_COLL + " not ready yet...");
+          return;
+        }
       }
     } catch (Exception e) {
       log.warn("Error getting cluster state, skipping metrics collection", e);
@@ -149,7 +187,11 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     }
     logMissingCollection = true;
     // get metrics
-    for (Group group : Arrays.asList(Group.core, Group.node, Group.jvm)) {
+    for (Group group : Arrays.asList(Group.jvm, Group.core, Group.node)) {
+      if (Thread.interrupted()) {
+        return;
+      }
+      log.info("--  collecting " + group + "...");
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.add(MetricsHandler.GROUP_PARAM, group.toString());
       params.add(MetricsHandler.COMPACT_PARAM, "true");
@@ -237,8 +279,9 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
 
   @Override
   public void close() {
+    log.info("Closing " + hashCode());
     if (collectService != null) {
-      collectService.shutdown();
+      collectService.shutdownNow();
     }
     if (factory != null) {
       factory.close();

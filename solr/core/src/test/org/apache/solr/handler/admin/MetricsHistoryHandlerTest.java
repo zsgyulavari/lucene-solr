@@ -17,10 +17,102 @@
 
 package org.apache.solr.handler.admin;
 
-import org.apache.solr.SolrTestCaseJ4;
+import java.util.List;
+
+import org.apache.solr.client.solrj.SolrClient;
+import org.apache.solr.client.solrj.cloud.SolrCloudManager;
+import org.apache.solr.client.solrj.cloud.autoscaling.AutoScalingConfig;
+import org.apache.solr.client.solrj.request.CollectionAdminRequest;
+import org.apache.solr.cloud.CloudTestUtils;
+import org.apache.solr.cloud.SolrCloudTestCase;
+import org.apache.solr.cloud.autoscaling.sim.SimCloudManager;
+import org.apache.solr.common.params.CollectionAdminParams;
+import org.apache.solr.common.params.CommonParams;
+import org.apache.solr.common.util.TimeSource;
+import org.apache.solr.core.SolrInfoBean;
+import org.apache.solr.metrics.SolrMetricManager;
+import org.apache.solr.util.LogLevel;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
+import org.junit.Test;
+import org.rrd4j.core.RrdDb;
 
 /**
  *
  */
-public class MetricsHistoryHandlerTest extends SolrTestCaseJ4 {
+@LogLevel("org.apache.solr.cloud.autoscaling=DEBUG")
+public class MetricsHistoryHandlerTest extends SolrCloudTestCase {
+
+  private static SolrCloudManager cloudManager;
+  private static SolrMetricManager metricManager;
+  private static TimeSource timeSource;
+  private static SolrClient solrClient;
+  private static boolean simulated;
+  private static int SPEED;
+
+  private static MetricsHistoryHandler handler;
+  private static MetricsHandler metricsHandler;
+
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    simulated = random().nextBoolean();
+    if (simulated) {
+      SPEED = 50;
+      cloudManager = SimCloudManager.createCluster(1, TimeSource.get("simTime:" + SPEED));
+      // wait for defaults to be applied - due to accelerated time sometimes we may miss this
+      cloudManager.getTimeSource().sleep(10000);
+      AutoScalingConfig cfg = cloudManager.getDistribStateManager().getAutoScalingConfig();
+      assertFalse("autoscaling config is empty", cfg.isEmpty());
+      metricManager = ((SimCloudManager)cloudManager).getMetricManager();
+      solrClient = ((SimCloudManager)cloudManager).simGetSolrClient();
+      // need to register the factory here, before we start the real cluster
+      metricsHandler = new MetricsHandler(metricManager);
+      handler = new MetricsHistoryHandler(metricsHandler, solrClient, cloudManager, 1, 1);
+      handler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), "", CommonParams.METRICS_HISTORY_PATH);
+    }
+    configureCluster(1)
+        .addConfig("conf", configset("cloud-minimal"))
+        .configure();
+    if (!simulated) {
+      cloudManager = cluster.getJettySolrRunner(0).getCoreContainer().getZkController().getSolrCloudManager();
+      metricManager = cluster.getJettySolrRunner(0).getCoreContainer().getMetricManager();
+      solrClient = cluster.getSolrClient();
+      metricsHandler = new MetricsHandler(metricManager);
+      handler = new MetricsHistoryHandler(metricsHandler, solrClient, cloudManager, 1, 1);
+      handler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), "", CommonParams.METRICS_HISTORY_PATH);
+      SPEED = 1;
+    }
+    timeSource = cloudManager.getTimeSource();
+
+    // create .system collection
+    CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(CollectionAdminParams.SYSTEM_COLL,
+        "conf", 1, 1);
+    create.process(solrClient);
+    CloudTestUtils.waitForState(cloudManager, "failed to create " + CollectionAdminParams.SYSTEM_COLL,
+        CollectionAdminParams.SYSTEM_COLL, CloudTestUtils.clusterShape(1, 1));
+  }
+
+  @AfterClass
+  public static void teardown() throws Exception {
+    if (handler != null) {
+      handler.close();
+    }
+    if (simulated) {
+      cloudManager.close();
+    }
+  }
+
+  @Test
+  public void testBasic() throws Exception {
+    timeSource.sleep(10000);
+    List<String> list = handler.getFactory().list();
+    assertEquals(list.toString(), 3, list.size());
+    for (String path : list) {
+      RrdDb db = new RrdDb(MetricsHistoryHandler.URI_PREFIX + path, true);
+      int dsCount = db.getDsCount();
+      int arcCount = db.getArcCount();
+      assertTrue("dsCount should be > 0, was " + dsCount, dsCount > 0);
+      assertEquals("arcCount", 4, arcCount);
+    }
+  }
 }

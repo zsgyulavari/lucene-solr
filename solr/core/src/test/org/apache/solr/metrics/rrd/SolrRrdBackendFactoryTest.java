@@ -17,25 +17,15 @@
 
 package org.apache.solr.metrics.rrd;
 
-import java.io.IOException;
 import java.util.Date;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.solr.SolrTestCaseJ4;
-import org.apache.solr.client.solrj.SolrClient;
-import org.apache.solr.client.solrj.SolrRequest;
-import org.apache.solr.client.solrj.SolrServerException;
-import org.apache.solr.client.solrj.request.QueryRequest;
-import org.apache.solr.client.solrj.request.UpdateRequest;
-import org.apache.solr.common.SolrDocument;
-import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.params.CollectionAdminParams;
-import org.apache.solr.common.params.SolrParams;
-import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.TimeSource;
+import org.apache.solr.util.MockSearchableSolrClient;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -54,12 +44,12 @@ import org.rrd4j.core.Sample;
 public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
 
   private SolrRrdBackendFactory factory;
-  private MockSolrClient solrClient;
+  private MockSearchableSolrClient solrClient;
   private TimeSource timeSource;
 
   @Before
   public void setup() throws Exception {
-    solrClient = new MockSolrClient();
+    solrClient = new MockSearchableSolrClient();
     if (random().nextBoolean()) {
       timeSource = TimeSource.NANO_TIME;
     } else {
@@ -96,10 +86,10 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
     timeSource.sleep(2000);
     // there should be one sync data
     assertEquals(solrClient.docs.toString(), 1, solrClient.docs.size());
-    SolrInputDocument doc = solrClient.docs.get(SolrRrdBackendFactory.ID_PREFIX + "foo");
+    SolrInputDocument doc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(SolrRrdBackendFactory.ID_PREFIX + "foo");
     long timestamp = ((Date)doc.getFieldValue("timestamp")).getTime();
     timeSource.sleep(2000);
-    SolrInputDocument newDoc = solrClient.docs.get(SolrRrdBackendFactory.ID_PREFIX + "foo");
+    SolrInputDocument newDoc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(SolrRrdBackendFactory.ID_PREFIX + "foo");
     assertEquals(newDoc.toString(), newDoc, doc);
     long firstTimestamp = TimeUnit.SECONDS.convert(timestamp, TimeUnit.MILLISECONDS);
     long lastTimestamp = firstTimestamp + 60;
@@ -113,7 +103,7 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
       lastTimestamp = lastTimestamp + 60;
     }
     timeSource.sleep(3000);
-    newDoc = solrClient.docs.get(SolrRrdBackendFactory.ID_PREFIX + "foo");
+    newDoc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(SolrRrdBackendFactory.ID_PREFIX + "foo");
     assertFalse(newDoc.toString(), newDoc.equals(doc));
     long newTimestamp = ((Date)newDoc.getFieldValue("timestamp")).getTime();
     assertNotSame(newTimestamp, timestamp);
@@ -150,7 +140,7 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
     // should update
     timestamp = newTimestamp;
     doc = newDoc;
-    newDoc = solrClient.docs.get(SolrRrdBackendFactory.ID_PREFIX + "foo");
+    newDoc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(SolrRrdBackendFactory.ID_PREFIX + "foo");
     assertFalse(newDoc.toString(), newDoc.equals(doc));
     newTimestamp = ((Date)newDoc.getFieldValue("timestamp")).getTime();
     assertNotSame(newTimestamp, timestamp);
@@ -181,64 +171,10 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
     timeSource.sleep(3000);
     doc = newDoc;
     timestamp = newTimestamp;
-    newDoc = solrClient.docs.get(SolrRrdBackendFactory.ID_PREFIX + "foo");
+    newDoc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(SolrRrdBackendFactory.ID_PREFIX + "foo");
     assertTrue(newDoc.toString(), newDoc.equals(doc));
     newTimestamp = ((Date)newDoc.getFieldValue("timestamp")).getTime();
     assertEquals(newTimestamp, timestamp);
   }
 
-  static class MockSolrClient extends SolrClient {
-    LinkedHashMap<String, SolrInputDocument> docs = new LinkedHashMap<>();
-
-    @Override
-    public NamedList<Object> request(SolrRequest request, String collection) throws SolrServerException, IOException {
-      NamedList<Object> res = new NamedList<>();
-      if (request instanceof UpdateRequest) {
-        List<SolrInputDocument> docList = ((UpdateRequest)request).getDocuments();
-        if (docList != null) {
-          assertEquals(docList.toString(), 1, docList.size());
-          SolrInputDocument doc = docList.get(0);
-          String id = (String)doc.getFieldValue("id");
-          assertNotNull(doc.toString(), id);
-          docs.put(id, doc);
-        }
-      } else if (request instanceof QueryRequest) {
-        SolrParams params = request.getParams();
-        String query = params.get("q");
-        final SolrDocumentList lst = new SolrDocumentList();
-        if (query != null) {
-          if (query.startsWith("{!term f=id}")) {
-            String id = query.substring(12);
-            SolrInputDocument doc = docs.get(id);
-            if (doc != null) {
-              SolrDocument d = new SolrDocument();
-              doc.forEach((k, f) -> {
-                f.forEach(v -> d.addField(k, v));
-              });
-              lst.add(d);
-              lst.setNumFound(1);
-            }
-          } else if (query.equals("*:*")) {
-            if (!docs.isEmpty()) {
-              lst.setNumFound(docs.size());
-              docs.values().forEach(doc -> {
-                SolrDocument d = new SolrDocument();
-                doc.forEach((k, f) -> {
-                  f.forEach(v -> d.addField(k, v));
-                });
-                lst.add(d);
-              });
-            }
-          }
-        }
-        res.add("response", lst);
-      }
-      return res;
-    }
-
-    @Override
-    public void close() throws IOException {
-
-    }
-  }
 }

@@ -66,6 +66,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
   public static final int DEFAULT_SYNC_PERIOD = 60;
   public static final int DEFAULT_MAX_DBS = 500;
 
+  public static final String NAME = "SOLR";
   public static final String ID_PREFIX = "rrd_";
   public static final String DOC_TYPE = "metrics_rrd";
 
@@ -83,8 +84,9 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     this.solrClient = solrClient;
     this.timeSource = timeSource;
     this.collection = collection;
+    log.info("Created " + hashCode());
     syncService = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(2,
-        new DefaultSolrThreadFactory("SolrRrdBackendFactory"));
+        new DefaultSolrThreadFactory("SolrRrdBackendFactory-" + hashCode()));
     syncService.setRemoveOnCancelPolicy(true);
     syncService.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
     syncService.scheduleWithFixedDelay(() -> maybeSyncBackends(),
@@ -212,6 +214,9 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     if (closed) {
       return;
     }
+    if (Thread.interrupted()) {
+      return;
+    }
     log.info("-- maybe sync backends: " + backends.keySet());
     Map<String, byte[]> syncData = new HashMap<>();
     backends.forEach((path, backend) -> {
@@ -238,6 +243,9 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
           log.warn("Error updating RRD data for " + path, e);
         }
       });
+      if (Thread.interrupted()) {
+        return;
+      }
       try {
         solrClient.commit(collection);
       } catch (SolrServerException e) {
@@ -286,7 +294,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
 
   @Override
   public String getName() {
-    return "SOLR";
+    return NAME;
   }
 
   @Override
@@ -296,10 +304,14 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
 
   @Override
   public void close() {
+    if (closed) {
+      return;
+    }
+    log.info("Closing " + hashCode());
     closed = true;
     backends.forEach((p, b) -> IOUtils.closeQuietly(b));
     backends.clear();
-    syncService.shutdown();
+    syncService.shutdownNow();
     syncService = null;
   }
 }

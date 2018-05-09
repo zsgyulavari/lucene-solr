@@ -74,6 +74,8 @@ import org.apache.solr.common.params.CommonAdminParams;
 import org.apache.solr.common.params.CoreAdminParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.Utils;
+import org.apache.solr.core.SolrInfoBean;
+import org.apache.solr.metrics.SolrMetricManager;
 import org.apache.zookeeper.CreateMode;
 import org.junit.Assert;
 import org.slf4j.Logger;
@@ -1057,6 +1059,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
             LOG.debug("-- no leader in " + s);
             continue;
           }
+          cloudManager.getMetricManager().registry(createRegistryName(collection, s.getName(), leader)).counter("UPDATE./update.requests").inc();
           String numDocsStr = leader.getStr("SEARCHER.searcher.numDocs");
           if (numDocsStr == null) {
             LOG.debug("-- no docs in " + leader);
@@ -1085,7 +1088,14 @@ public class SimClusterStateProvider implements ClusterStateProvider {
             throw new UnsupportedOperationException("Only '*:*' query is supported in deleteByQuery");
           }
           for (Slice s : coll.getSlices()) {
-            String numDocsStr = s.getLeader().getStr("SEARCHER.searcher.numDocs");
+            Replica leader = s.getLeader();
+            if (leader == null) {
+              LOG.debug("-- no leader in " + s);
+              continue;
+            }
+
+            cloudManager.getMetricManager().registry(createRegistryName(collection, s.getName(), leader)).counter("UPDATE./update.requests").inc();
+            String numDocsStr = leader.getStr("SEARCHER.searcher.numDocs");
             if (numDocsStr == null) {
               continue;
             }
@@ -1111,6 +1121,10 @@ public class SimClusterStateProvider implements ClusterStateProvider {
             throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Document without id: " + doc);
           }
           Slice s = router.getTargetSlice(id, null, null, req.getParams(), coll);
+          Replica leader = s.getLeader();
+          if (leader != null) {
+            cloudManager.getMetricManager().registry(createRegistryName(collection, s.getName(), leader)).counter("UPDATE./update.requests").inc();
+          }
           modified = true;
           try {
             simSetShardValue(collection, s.getName(), "SEARCHER.searcher.numDocs", 1, true, false);
@@ -1130,6 +1144,11 @@ public class SimClusterStateProvider implements ClusterStateProvider {
       lock.unlock();
     }
     return new UpdateResponse();
+  }
+
+  private static String createRegistryName(String collection, String shard, Replica r) {
+    return SolrMetricManager.getRegistryName(SolrInfoBean.Group.core, collection, shard,
+        Utils.parseMetricsReplicaName(collection, r.getCoreName()));
   }
 
   /**
