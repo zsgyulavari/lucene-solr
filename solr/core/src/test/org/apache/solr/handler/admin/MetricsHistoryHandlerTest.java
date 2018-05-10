@@ -67,7 +67,7 @@ public class MetricsHistoryHandlerTest extends SolrCloudTestCase {
       solrClient = ((SimCloudManager)cloudManager).simGetSolrClient();
       // need to register the factory here, before we start the real cluster
       metricsHandler = new MetricsHandler(metricManager);
-      handler = new MetricsHistoryHandler(metricsHandler, solrClient, cloudManager, 1, 1);
+      handler = new MetricsHistoryHandler("localhost:1234_solr", metricsHandler, solrClient, cloudManager, 1, 1);
       handler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), "", CommonParams.METRICS_HISTORY_PATH);
     }
     configureCluster(1)
@@ -78,7 +78,7 @@ public class MetricsHistoryHandlerTest extends SolrCloudTestCase {
       metricManager = cluster.getJettySolrRunner(0).getCoreContainer().getMetricManager();
       solrClient = cluster.getSolrClient();
       metricsHandler = new MetricsHandler(metricManager);
-      handler = new MetricsHistoryHandler(metricsHandler, solrClient, cloudManager, 1, 1);
+      handler = new MetricsHistoryHandler(cluster.getJettySolrRunner(0).getNodeName(), metricsHandler, solrClient, cloudManager, 1, 1);
       handler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), "", CommonParams.METRICS_HISTORY_PATH);
       SPEED = 1;
     }
@@ -105,10 +105,10 @@ public class MetricsHistoryHandlerTest extends SolrCloudTestCase {
   @Test
   public void testBasic() throws Exception {
     timeSource.sleep(10000);
-    List<String> list = handler.getFactory().list();
+    List<String> list = handler.getFactory().list(100);
     assertEquals(list.toString(), 3, list.size());
     for (String path : list) {
-      RrdDb db = new RrdDb(MetricsHistoryHandler.URI_PREFIX + path, true);
+      RrdDb db = new RrdDb(MetricsHistoryHandler.URI_PREFIX + path, true, handler.getFactory());
       int dsCount = db.getDsCount();
       int arcCount = db.getArcCount();
       assertTrue("dsCount should be > 0, was " + dsCount, dsCount > 0);

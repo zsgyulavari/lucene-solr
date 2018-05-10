@@ -553,7 +553,7 @@ public class CoreContainer {
     metricsHandler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), metricTag, METRICS_PATH);
 
     if (isZooKeeperAware()) {
-      metricsHistoryHandler = new MetricsHistoryHandler(metricsHandler,
+      metricsHistoryHandler = new MetricsHistoryHandler(getZkController().getNodeName(), metricsHandler,
           new CloudSolrClient.Builder(Collections.singletonList(getZkController().getZkServerAddress()), Optional.empty())
       .withHttpClient(updateShardHandler.getDefaultHttpClient()).build(), getZkController().getSolrCloudManager(),
           MetricsHistoryHandler.DEFAULT_COLLECT_PERIOD, SolrRrdBackendFactory.DEFAULT_SYNC_PERIOD);

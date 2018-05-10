@@ -33,7 +33,6 @@ import org.rrd4j.ConsolFun;
 import org.rrd4j.DsType;
 import org.rrd4j.core.FetchData;
 import org.rrd4j.core.FetchRequest;
-import org.rrd4j.core.RrdBackendFactory;
 import org.rrd4j.core.RrdDb;
 import org.rrd4j.core.RrdDef;
 import org.rrd4j.core.Sample;
@@ -43,6 +42,7 @@ import org.rrd4j.core.Sample;
  */
 public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
 
+  private static final String nodeName = "localhost:1234_solr";
   private SolrRrdBackendFactory factory;
   private MockSearchableSolrClient solrClient;
   private TimeSource timeSource;
@@ -55,8 +55,7 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
     } else {
       timeSource = TimeSource.get("simTime:50");
     }
-    factory = new SolrRrdBackendFactory(solrClient, CollectionAdminParams.SYSTEM_COLL, 1, timeSource);
-    RrdBackendFactory.registerAndSetAsDefaultFactory(factory);
+    factory = new SolrRrdBackendFactory(nodeName, solrClient, CollectionAdminParams.SYSTEM_COLL, 1, timeSource);
   }
 
   @After
@@ -79,17 +78,18 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
 
   @Test
   public void testBasic() throws Exception {
-    RrdDb db = new RrdDb(createDef());
-    List<String> list = factory.list();
+    RrdDb db = new RrdDb(createDef(), factory);
+    List<String> list = factory.list(100);
     assertEquals(list.toString(), 1, list.size());
     assertEquals(list.toString(), "foo", list.get(0));
     timeSource.sleep(2000);
     // there should be one sync data
     assertEquals(solrClient.docs.toString(), 1, solrClient.docs.size());
-    SolrInputDocument doc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(SolrRrdBackendFactory.ID_PREFIX + "foo");
+    String id = SolrRrdBackendFactory.ID_PREFIX + SolrRrdBackendFactory.ID_SEP + nodeName + SolrRrdBackendFactory.ID_SEP + "foo";
+    SolrInputDocument doc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(id);
     long timestamp = ((Date)doc.getFieldValue("timestamp")).getTime();
     timeSource.sleep(2000);
-    SolrInputDocument newDoc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(SolrRrdBackendFactory.ID_PREFIX + "foo");
+    SolrInputDocument newDoc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(id);
     assertEquals(newDoc.toString(), newDoc, doc);
     long firstTimestamp = TimeUnit.SECONDS.convert(timestamp, TimeUnit.MILLISECONDS);
     long lastTimestamp = firstTimestamp + 60;
@@ -103,7 +103,7 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
       lastTimestamp = lastTimestamp + 60;
     }
     timeSource.sleep(3000);
-    newDoc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(SolrRrdBackendFactory.ID_PREFIX + "foo");
+    newDoc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(id);
     assertFalse(newDoc.toString(), newDoc.equals(doc));
     long newTimestamp = ((Date)newDoc.getFieldValue("timestamp")).getTime();
     assertNotSame(newTimestamp, timestamp);
@@ -125,12 +125,12 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
     db.close();
 
     // should still be listed
-    list = factory.list();
+    list = factory.list(100);
     assertEquals(list.toString(), 1, list.size());
     assertEquals(list.toString(), "foo", list.get(0));
 
     // re-open read-write
-    db = new RrdDb("solr:foo");
+    db = new RrdDb("solr:foo", factory);
     s = db.createSample();
     s.setTime(lastTimestamp);
     s.setValue("one", 7000);
@@ -140,7 +140,7 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
     // should update
     timestamp = newTimestamp;
     doc = newDoc;
-    newDoc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(SolrRrdBackendFactory.ID_PREFIX + "foo");
+    newDoc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(id);
     assertFalse(newDoc.toString(), newDoc.equals(doc));
     newTimestamp = ((Date)newDoc.getFieldValue("timestamp")).getTime();
     assertNotSame(newTimestamp, timestamp);
@@ -161,7 +161,7 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
     }
 
     // open a read-only version of the db
-    RrdDb readOnly = new RrdDb("solr:foo", true);
+    RrdDb readOnly = new RrdDb("solr:foo", true, factory);
     s = readOnly.createSample();
     s.setTime(lastTimestamp + 120);
     s.setValue("one", 10000001);
@@ -171,7 +171,7 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
     timeSource.sleep(3000);
     doc = newDoc;
     timestamp = newTimestamp;
-    newDoc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(SolrRrdBackendFactory.ID_PREFIX + "foo");
+    newDoc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(id);
     assertTrue(newDoc.toString(), newDoc.equals(doc));
     newTimestamp = ((Date)newDoc.getFieldValue("timestamp")).getTime();
     assertEquals(newTimestamp, timestamp);
