@@ -173,7 +173,6 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.add(CommonParams.Q, "{!term f=id}" + ID_PREFIX + ID_SEP + nodeName + ID_SEP + path);
       params.add(CommonParams.FQ, CommonParams.TYPE + ":" + DOC_TYPE);
-      params.add(CommonParams.FQ, "{!term f=" + NODE_FIELD + "}:" + nodeName);
       QueryResponse rsp = solrClient.query(collection, params);
       SolrDocumentList docs = rsp.getResults();
       if (docs == null || docs.isEmpty()) {

@@ -16,6 +16,10 @@
  */
 package org.apache.solr.handler.admin;
 
+import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
@@ -24,19 +28,16 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -52,6 +53,8 @@ import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.params.CollectionAdminParams;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
+import org.apache.solr.common.params.SolrParams;
+import org.apache.solr.common.util.Base64;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.common.util.TimeSource;
@@ -71,10 +74,11 @@ import org.rrd4j.core.Datasource;
 import org.rrd4j.core.DsDef;
 import org.rrd4j.core.FetchData;
 import org.rrd4j.core.FetchRequest;
-import org.rrd4j.core.RrdBackendFactory;
 import org.rrd4j.core.RrdDb;
 import org.rrd4j.core.RrdDef;
 import org.rrd4j.core.Sample;
+import org.rrd4j.graph.RrdGraph;
+import org.rrd4j.graph.RrdGraphDef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -226,7 +230,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
               continue;
             }
             // set the timestamp
-            Sample s = db.createSample(TimeUnit.MILLISECONDS.convert(timeSource.getEpochTimeNs(), TimeUnit.NANOSECONDS));
+            Sample s = db.createSample(TimeUnit.SECONDS.convert(timeSource.getEpochTimeNs(), TimeUnit.NANOSECONDS));
             NamedList<Object> values = (NamedList<Object>)entry.getValue();
             AtomicBoolean dirty = new AtomicBoolean(false);
             counters.get(group.toString()).forEach(c -> {
@@ -240,16 +244,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
               Number val = (Number)values.get(c);
               if (val != null) {
                 dirty.set(true);
-                try {
-                  s.setValue(c, val.doubleValue());
-                } catch (IllegalArgumentException e) {
-                  try {
-                    log.error("registry " + registry + ", rrd=" + db.getRrdDef().dump());
-                  } catch (IOException e1) {
-                    log.error("getRrdDef", e1);
-                  }
-                  throw e;
-                }
+                s.setValue(c, val.doubleValue());
               }
             });
             if (dirty.get()) {
@@ -269,7 +264,9 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     // base sampling period is collectPeriod - samples more frequent than
     // that will be dropped, samples less frequent will be interpolated
     RrdDef def = new RrdDef(URI_PREFIX + registry, collectPeriod);
-    def.setStartTime(TimeUnit.MILLISECONDS.convert(timeSource.getEpochTimeNs(), TimeUnit.NANOSECONDS));
+    // set the start time early enough so that the first sample is always later
+    // than the start of the archive
+    def.setStartTime(TimeUnit.SECONDS.convert(timeSource.getEpochTimeNs(), TimeUnit.NANOSECONDS) - def.getStep());
 
     // add datasources
 
@@ -301,15 +298,27 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     }
   }
 
-  private static final Map<String, Cmd> actions = Collections.unmodifiableMap(
-      Stream.of(Cmd.values())
-          .collect(toMap(c -> c.name().toLowerCase(Locale.ROOT), Function.identity())));
-
   public enum Cmd {
-    LIST, STATUS, GET, DELETE;
+    LIST, STATUS, GET, GRAPH, DELETE;
+
+    static final Map<String, Cmd> actions = Collections.unmodifiableMap(
+        Stream.of(Cmd.values())
+            .collect(toMap(c -> c.name().toLowerCase(Locale.ROOT), Function.identity())));
 
     public static Cmd get(String p) {
       return p == null ? null : actions.get(p.toLowerCase(Locale.ROOT));
+    }
+  }
+
+  public enum Format {
+    LIST, STRING, GRAPH;
+
+    static final Map<String, Format> formats = Collections.unmodifiableMap(
+        Stream.of(Format.values())
+            .collect(toMap(c -> c.name().toLowerCase(Locale.ROOT), Function.identity())));
+
+    public static Format get(String p) {
+      return p == null ? null : formats.get(p.toLowerCase(Locale.ROOT));
     }
   }
 
@@ -322,7 +331,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     }
     Cmd cmd = Cmd.get(actionStr);
     if (cmd == null) {
-      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "unknown 'action' param '" + actionStr + "', supported actions: " + actions.values());
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "unknown 'action' param '" + actionStr + "', supported actions: " + Cmd.values());
     }
     Object res = null;
     switch (cmd) {
@@ -336,6 +345,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
           throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "'name' is a required param");
         }
         String[] dsNames = req.getParams().getParams("ds");
+        Format format = Format.get(req.getParams().get("format", Format.LIST.toString()).toUpperCase(Locale.ROOT));
         if (!factory.exists(name)) {
           rsp.add("error", "'" + name + "' doesn't exist");
         } else {
@@ -343,7 +353,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
           RrdDb db = new RrdDb(URI_PREFIX + name, true, factory);
           res = new NamedList<Object>();
           NamedList<Object> data = new NamedList<>();
-          data.add("data", getData(db, dsNames));
+          data.add("data", getData(db, dsNames, format, req.getParams()));
           ((NamedList)res).add(name, data);
           db.close();
         }
@@ -418,27 +428,87 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     return res;
   }
 
-  private NamedList<Object> getData(RrdDb db, String[] dsNames) throws IOException {
+  private NamedList<Object> getData(RrdDb db, String[] dsNames, Format format, SolrParams params) throws IOException {
     NamedList<Object> res = new SimpleOrderedMap<>();
     if (dsNames == null || dsNames.length == 0) {
       dsNames = db.getDsNames();
     }
+    StringBuilder str = new StringBuilder();
     RrdDef def = db.getRrdDef();
     ArcDef[] arcDefs = def.getArcDefs();
     for (ArcDef arcDef : arcDefs) {
       SimpleOrderedMap map = new SimpleOrderedMap();
       res.add(arcDef.dump(), map);
       Archive a = db.getArchive(arcDef.getConsolFun(), arcDef.getSteps());
-      FetchRequest fr = db.createFetchRequest(arcDef.getConsolFun(), a.getStartTime(), a.getEndTime(), arcDef.getSteps());
+      // startTime / endTime, arcStep are in seconds
+      FetchRequest fr = db.createFetchRequest(arcDef.getConsolFun(),
+          a.getStartTime() - a.getArcStep(),
+          a.getEndTime() + a.getArcStep());
       FetchData fd = fr.fetchData();
-      for (long t : fd.getTimestamps()) {
-        map.add("timestamps", t);
+      if (format != Format.GRAPH) {
+        // add timestamps separately from values
+        long[] timestamps = fd.getTimestamps();
+        str.setLength(0);
+        for (int i = 0; i < timestamps.length; i++) {
+          if (format == Format.LIST) {
+            map.add("timestamps", timestamps[i]);
+          } else {
+            if (i > 0) {
+              str.append('\n');
+            }
+            str.append(String.valueOf(timestamps[i]));
+          }
+        }
+        if (format == Format.STRING) {
+          map.add("timestamps", str.toString());
+        }
       }
       SimpleOrderedMap values = new SimpleOrderedMap();
       map.add("values", values);
       for (String name : dsNames) {
-        for (double d : fd.getValues(name)) {
-          values.add(name, d);
+        double[] vals = fd.getValues(name);
+        switch (format) {
+          case GRAPH:
+            RrdGraphDef graphDef = new RrdGraphDef();
+            graphDef.datasource(name, fd);
+            graphDef.setStartTime(a.getStartTime() - a.getArcStep());
+            graphDef.setEndTime(a.getEndTime() + a.getArcStep());
+            graphDef.setAltAutoscale(true);
+            graphDef.setAltYGrid(true);
+            graphDef.setShowSignature(false);
+            graphDef.setAntiAliasing(true);
+            graphDef.setTextAntiAliasing(true);
+            graphDef.setWidth(500);
+            graphDef.setHeight(125);
+            // redraw immediately
+            graphDef.setLazy(false);
+            // "Solr" site background color
+            graphDef.line(name, new Color(0xD9, 0x41, 0x1E), name, 2);
+            RrdGraph graph = new RrdGraph(graphDef);
+            BufferedImage bi = new BufferedImage(
+                graph.getRrdGraphInfo().getWidth(),
+                graph.getRrdGraphInfo().getHeight(),
+                BufferedImage.TYPE_INT_RGB);
+            graph.render(bi.getGraphics());
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ImageIO.write(bi, "png", baos);
+            values.add(name, Base64.byteArrayToBase64(baos.toByteArray()));
+            break;
+          case STRING:
+            str.setLength(0);
+            for (int i = 0; i < vals.length; i++) {
+              if (i > 0) {
+                str.append('\n');
+              }
+              str.append(String.valueOf(vals[i]));
+            }
+            values.add(name, str.toString());
+            break;
+          case LIST:
+            for (int i = 0; i < vals.length; i++) {
+              values.add(name, vals[i]);
+            }
+            break;
         }
       }
     }

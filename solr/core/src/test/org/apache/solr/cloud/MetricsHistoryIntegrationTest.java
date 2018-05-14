@@ -12,6 +12,7 @@ import org.apache.solr.client.solrj.request.GenericSolrRequest;
 import org.apache.solr.cloud.autoscaling.sim.SimCloudManager;
 import org.apache.solr.common.params.CollectionAdminParams;
 import org.apache.solr.common.params.CommonParams;
+import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.TimeSource;
@@ -62,7 +63,7 @@ public class MetricsHistoryIntegrationTest extends SolrCloudTestCase {
         .process(solrClient);
     CloudTestUtils.waitForState(cloudManager, CollectionAdminParams.SYSTEM_COLL,
         30, TimeUnit.SECONDS, CloudTestUtils.clusterShape(1, 2));
-    // sleep a little to allow handler to collect some metrics
+    // sleep a little to allow the handler to collect some metrics
     timeSource.sleep(90000);
   }
 
@@ -79,6 +80,20 @@ public class MetricsHistoryIntegrationTest extends SolrCloudTestCase {
   public void testList() throws Exception {
     NamedList<Object> rsp = solrClient.request(createHistoryRequest(params(CommonParams.ACTION, "list")));
     assertNotNull(rsp);
+    log.info("Response: " + rsp);
+  }
+
+  @Test
+  public void testStatus() throws Exception {
+
+  }
+
+  @Test
+  public void testGet() throws Exception {
+    NamedList<Object> rsp = solrClient.request(createHistoryRequest(params(
+        CommonParams.ACTION, "get", CommonParams.NAME, "solr.jvm")));
+    assertNotNull(rsp);
+    log.info("Response: " + rsp);
   }
 
   public static SolrRequest createHistoryRequest(SolrParams params) {
