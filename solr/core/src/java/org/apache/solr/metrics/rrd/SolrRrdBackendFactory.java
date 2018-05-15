@@ -30,7 +30,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -38,21 +37,16 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrServerException;
-import org.apache.solr.client.solrj.impl.CloudSolrClient;
-import org.apache.solr.client.solrj.io.SolrClientCache;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrCloseable;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.SolrDocumentList;
-import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
-import org.apache.solr.common.cloud.ClusterState;
 import org.apache.solr.common.params.CollectionAdminParams;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.util.IOUtils;
 import org.apache.solr.common.util.TimeSource;
-import org.apache.solr.core.CoreContainer;
 import org.apache.solr.util.DefaultSolrThreadFactory;
 import org.rrd4j.core.RrdBackend;
 import org.rrd4j.core.RrdBackendFactory;
@@ -60,7 +54,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- *
+ * RRD backend factory using Solr documents as underlying storage.
+ * <p>RRD databases are identified by paths in the format <code>solr:dbName</code>.
+ * Typically the path will correspond to the name of metric or a group of metrics, eg:
+ * <code>solr:QUERY./select.requests</code></p>
+ * <p>NOTE: Solr doesn't register instances of this factory in the static
+ * registry {@link RrdBackendFactory#registerFactory(RrdBackendFactory)} because
+ * it's then impossible to manage its life-cycle.</p>
  */
 public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrCloseable {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
@@ -88,6 +88,17 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
 
   private final Map<String, SolrRrdBackend> backends = new ConcurrentHashMap<>();
 
+  /**
+   * Create a factory.
+   * @param nodeName node name. Documents are stored in a distributed collection and
+   *                 this parameter is needed to avoid namespace conflicts.
+   * @param solrClient SolrClient to use
+   * @param collection collection name where documents are stored (typicall this is
+   *                   {@link CollectionAdminParams#SYSTEM_COLL})
+   * @param syncPeriod synchronization period in seconds - how often modified
+   *                   databases are stored as updated Solr documents
+   * @param timeSource time source
+   */
   public SolrRrdBackendFactory(String nodeName, SolrClient solrClient, String collection, int syncPeriod, TimeSource timeSource) {
     this.nodeName = nodeName;
     this.solrClient = solrClient;
@@ -145,6 +156,15 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     }
   }
 
+  /**
+   * Open (or get) a backend.
+   * @param path backend path (without URI scheme)
+   * @param readOnly if true then the backend will never be synchronized to Solr,
+   *                 and updates will be silently ignored. Read-only backends can
+   *                 be safely closed and discarded after use.
+   * @return an instance of Solr backend.
+   * @throws IOException on Solr error when retrieving existing data
+   */
   @Override
   protected synchronized RrdBackend open(String path, boolean readOnly) throws IOException {
     ensureOpen();
@@ -200,6 +220,12 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     backends.remove(path);
   }
 
+  /**
+   * List all available databases created by this node name
+   * @param maxLength maximum number of results to return
+   * @return list of database names, or empty
+   * @throws IOException on server errors
+   */
   public List<String> list(int maxLength) throws IOException {
     Set<String> names = new HashSet<>();
     try {
@@ -224,6 +250,10 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     return list;
   }
 
+  /**
+   * Remove all databases created by this node name.
+   * @throws IOException on server error
+   */
   public void removeAll() throws IOException {
     for (Iterator<SolrRrdBackend> it = backends.values().iterator(); it.hasNext(); ) {
       SolrRrdBackend backend = it.next();
@@ -241,6 +271,11 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     }
   }
 
+  /**
+   * Remove a database.
+   * @param path database path.
+   * @throws IOException on Solr exception
+   */
   public void remove(String path) throws IOException {
     SolrRrdBackend backend = backends.get(path);
     if (backend != null) {
@@ -254,7 +289,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     }
   }
 
-  public synchronized void maybeSyncBackends() {
+  synchronized void maybeSyncBackends() {
     if (closed) {
       return;
     }
@@ -307,6 +342,13 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     }
   }
 
+  /**
+   * Check for existence of a backend.
+   * @param path backend path, without the URI scheme
+   * @return true when a backend exists. Note that a backend may exist only
+   * in memory if it was created recently within {@link #syncPeriod}.
+   * @throws IOException on Solr exception
+   */
   @Override
   public boolean exists(String path) throws IOException {
     // check in-memory backends first

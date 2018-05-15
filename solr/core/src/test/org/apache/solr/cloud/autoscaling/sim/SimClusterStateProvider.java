@@ -425,6 +425,13 @@ public class SimClusterStateProvider implements ClusterStateProvider {
         disk = SimCloudManager.DEFAULT_DISK;
       }
       cloudManager.getSimNodeStateProvider().simSetNodeValue(nodeId, ImplicitSnitch.DISK, disk - 1);
+      // fake metrics
+      String registry = SolrMetricManager.getRegistryName(SolrInfoBean.Group.core, replicaInfo.getCollection(),
+          replicaInfo.getShard(),
+          Utils.parseMetricsReplicaName(replicaInfo.getCollection(), replicaInfo.getCore()));
+      cloudManager.getMetricManager().registry(registry).counter("UPDATE./update.requests");
+      cloudManager.getMetricManager().registry(registry).counter("QUERY./select.requests");
+      cloudManager.getMetricManager().registerGauge(null, registry, () -> 1000, "", true, "INDEX.sizeInBytes");
       if (runLeaderElection) {
         simRunLeaderElection(Collections.singleton(replicaInfo.getCollection()), true);
       }

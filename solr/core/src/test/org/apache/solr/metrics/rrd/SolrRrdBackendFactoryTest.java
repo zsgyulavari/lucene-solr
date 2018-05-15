@@ -160,6 +160,8 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
       assertEquals(100.0, two[i], 0.00001);
     }
 
+    db.close();
+
     // open a read-only version of the db
     RrdDb readOnly = new RrdDb("solr:foo", true, factory);
     s = readOnly.createSample();
@@ -175,6 +177,7 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
     assertTrue(newDoc.toString(), newDoc.equals(doc));
     newTimestamp = ((Date)newDoc.getFieldValue("timestamp")).getTime();
     assertEquals(newTimestamp, timestamp);
+    readOnly.close();
   }
 
 }

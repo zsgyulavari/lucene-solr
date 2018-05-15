@@ -40,7 +40,7 @@ import org.rrd4j.core.RrdDb;
 /**
  *
  */
-@LogLevel("org.apache.solr.cloud.autoscaling=DEBUG")
+@LogLevel("org.apache.solr.cloud=DEBUG")
 public class MetricsHistoryHandlerTest extends SolrCloudTestCase {
 
   private static SolrCloudManager cloudManager;
@@ -112,7 +112,8 @@ public class MetricsHistoryHandlerTest extends SolrCloudTestCase {
       int dsCount = db.getDsCount();
       int arcCount = db.getArcCount();
       assertTrue("dsCount should be > 0, was " + dsCount, dsCount > 0);
-      assertEquals("arcCount", 4, arcCount);
+      assertEquals("arcCount", 5, arcCount);
+      db.close();
     }
   }
 }

@@ -33,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TimeZone;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -120,6 +121,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
   private final Map<String, List<String>> gauges = new HashMap<>();
 
   private boolean logMissingCollection = true;
+  private String versionString;
 
   public MetricsHistoryHandler(String nodeName, MetricsHandler metricsHandler,
                                SolrClient solrClient, SolrCloudManager cloudManager, int collectPeriod, int syncPeriod) {
@@ -137,6 +139,14 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     gauges.put(Group.core.toString(), DEFAULT_CORE_GAUGES);
     gauges.put(Group.node.toString(), DEFAULT_NODE_GAUGES);
     gauges.put(Group.jvm.toString(), DEFAULT_JVM_GAUGES);
+
+    versionString = this.getClass().getPackage().getImplementationVersion();
+    if (versionString == null) {
+      versionString = "?.?.?";
+    }
+    if (versionString.length() > 24) {
+      versionString = versionString.substring(0, 24) + "...";
+    }
 
     collectService = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(1,
         new DefaultSolrThreadFactory("MetricsHistoryHandler"));
@@ -280,10 +290,11 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
 
     // use AVERAGE consolidation,
     // use NaN when >50% samples are missing
-    def.addArchive(ConsolFun.AVERAGE, 0.5, 1, 120); // 2 hours
+    def.addArchive(ConsolFun.AVERAGE, 0.5, 1, 240); // 4 hours
     def.addArchive(ConsolFun.AVERAGE, 0.5, 10, 288); // 48 hours
     def.addArchive(ConsolFun.AVERAGE, 0.5, 60, 336); // 2 weeks
     def.addArchive(ConsolFun.AVERAGE, 0.5, 240, 180); // 2 months
+    def.addArchive(ConsolFun.AVERAGE, 0.5, 1440, 365); // 1 year
     return def;
   }
 
@@ -299,14 +310,18 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
   }
 
   public enum Cmd {
-    LIST, STATUS, GET, GRAPH, DELETE;
+    LIST, STATUS, GET, DELETE;
 
     static final Map<String, Cmd> actions = Collections.unmodifiableMap(
         Stream.of(Cmd.values())
-            .collect(toMap(c -> c.name().toLowerCase(Locale.ROOT), Function.identity())));
+            .collect(toMap(Cmd::toLower, Function.identity())));
 
     public static Cmd get(String p) {
       return p == null ? null : actions.get(p.toLowerCase(Locale.ROOT));
+    }
+
+    public String toLower() {
+      return toString().toLowerCase(Locale.ROOT);
     }
   }
 
@@ -315,10 +330,14 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
 
     static final Map<String, Format> formats = Collections.unmodifiableMap(
         Stream.of(Format.values())
-            .collect(toMap(c -> c.name().toLowerCase(Locale.ROOT), Function.identity())));
+            .collect(toMap(Format::toLower, Function.identity())));
 
     public static Format get(String p) {
       return p == null ? null : formats.get(p.toLowerCase(Locale.ROOT));
+    }
+
+    public String toLower() {
+      return toString().toLowerCase(Locale.ROOT);
     }
   }
 
@@ -345,13 +364,17 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
           throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "'name' is a required param");
         }
         String[] dsNames = req.getParams().getParams("ds");
-        Format format = Format.get(req.getParams().get("format", Format.LIST.toString()).toUpperCase(Locale.ROOT));
+        String formatStr = req.getParams().get("format", Format.LIST.toString());
+        Format format = Format.get(formatStr);
+        if (format == null) {
+          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "unknown 'format' param '" + formatStr + "', supported formats: " + Format.values());
+        }
         if (!factory.exists(name)) {
           rsp.add("error", "'" + name + "' doesn't exist");
         } else {
           // get a throwaway copy (safe to close and discard)
           RrdDb db = new RrdDb(URI_PREFIX + name, true, factory);
-          res = new NamedList<Object>();
+          res = new NamedList<>();
           NamedList<Object> data = new NamedList<>();
           data.add("data", getData(db, dsNames, format, req.getParams()));
           ((NamedList)res).add(name, data);
@@ -368,8 +391,10 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
         } else {
           // get a throwaway copy (safe to close and discard)
           RrdDb db = new RrdDb(URI_PREFIX + name, true, factory);
-          Map<String, Object> map = new HashMap<>();
-          map.put(name, Collections.singletonMap("status", reportStatus(db)));
+          NamedList<Object> map = new NamedList<>();
+          NamedList<Object> status = new NamedList<>();
+          status.add("status", reportStatus(db));
+          map.add(name, status);
           db.close();
           res = map;
         }
@@ -392,16 +417,16 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     }
   }
 
-  private Map<String, Object> reportStatus(RrdDb db) throws IOException {
-    Map<String, Object> res = new LinkedHashMap<>();
-    res.put("lastModified", db.getLastUpdateTime());
+  private NamedList<Object> reportStatus(RrdDb db) throws IOException {
+    NamedList<Object> res = new SimpleOrderedMap<>();
+    res.add("lastModified", db.getLastUpdateTime());
     RrdDef def = db.getRrdDef();
-    res.put("step", def.getStep());
-    res.put("datasourceCount", db.getDsCount());
-    res.put("archiveCount", db.getArcCount());
-    res.put("datasourceNames", Arrays.asList(db.getDsNames()));
+    res.add("step", def.getStep());
+    res.add("datasourceCount", db.getDsCount());
+    res.add("archiveCount", db.getArcCount());
+    res.add("datasourceNames", Arrays.asList(db.getDsNames()));
     List<Object> dss = new ArrayList<>(db.getDsCount());
-    res.put("datasources", dss);
+    res.add("datasources", dss);
     for (DsDef dsDef : def.getDsDefs()) {
       Map<String, Object> map = new LinkedHashMap<>();
       map.put("datasource", dsDef.dump());
@@ -410,7 +435,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
       dss.add(map);
     }
     List<Object> archives = new ArrayList<>(db.getArcCount());
-    res.put("archives", archives);
+    res.add("archives", archives);
     ArcDef[] arcDefs = def.getArcDefs();
     for (int i = 0; i < db.getArcCount(); i++) {
       Archive a = db.getArchive(i);
@@ -470,20 +495,27 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
         switch (format) {
           case GRAPH:
             RrdGraphDef graphDef = new RrdGraphDef();
+            graphDef.setTitle(name);
             graphDef.datasource(name, fd);
             graphDef.setStartTime(a.getStartTime() - a.getArcStep());
             graphDef.setEndTime(a.getEndTime() + a.getArcStep());
+            graphDef.setPoolUsed(false);
             graphDef.setAltAutoscale(true);
             graphDef.setAltYGrid(true);
-            graphDef.setShowSignature(false);
+            graphDef.setAltYMrtg(true);
+            graphDef.setSignature("Apache Solr " + versionString);
+            graphDef.setNoLegend(true);
             graphDef.setAntiAliasing(true);
             graphDef.setTextAntiAliasing(true);
             graphDef.setWidth(500);
-            graphDef.setHeight(125);
+            graphDef.setHeight(175);
+            graphDef.setTimeZone(TimeZone.getDefault());
+            graphDef.setLocale(Locale.getDefault());
             // redraw immediately
             graphDef.setLazy(false);
-            // "Solr" site background color
-            graphDef.line(name, new Color(0xD9, 0x41, 0x1E), name, 2);
+            // area with a border
+            graphDef.area(name, new Color(0xffb860), null);
+            graphDef.line(name, Color.RED, null, 1.0f);
             RrdGraph graph = new RrdGraph(graphDef);
             BufferedImage bi = new BufferedImage(
                 graph.getRrdGraphInfo().getWidth(),

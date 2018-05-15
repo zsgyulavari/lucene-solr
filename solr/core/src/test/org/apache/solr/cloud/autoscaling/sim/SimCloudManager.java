@@ -226,6 +226,7 @@ public class SimCloudManager implements SolrCloudManager {
     MetricsHandler metricsHandler = new MetricsHandler(metricManager);
     this.historyHandler = new MetricsHistoryHandler("1.0.0.1:1111_solr", metricsHandler, solrClient, this,
         MetricsHistoryHandler.DEFAULT_COLLECT_PERIOD, SolrRrdBackendFactory.DEFAULT_SYNC_PERIOD);
+    this.historyHandler.initializeMetrics(metricManager, SolrMetricManager.getRegistryName(SolrInfoBean.Group.node), metricTag, CommonParams.METRICS_HISTORY_PATH);
 
 
     triggerThreadGroup = new ThreadGroup("Simulated Overseer autoscaling triggers");
