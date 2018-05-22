@@ -695,9 +695,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable {
    *           IO error
    */
   public IndexWriter(Directory d, IndexWriterConfig conf) throws IOException {
-    if (d.checkPendingDeletions()) {
-      throw new IllegalArgumentException("Directory " + d + " still has pending deleted files; cannot initialize IndexWriter");
-    }
     enableTestPoints = isEnableTestPoints();
     conf.setIndexWriter(this); // prevent reuse by other instances
     config = conf;
@@ -847,6 +844,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable {
 
         rollbackSegments = segmentInfos.createBackupSegmentInfos();
       }
+
+
 
       commitUserData = new HashMap<>(segmentInfos.getUserData()).entrySet();
 
@@ -1776,8 +1775,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable {
       if (dvType == DocValuesType.NONE) {
         throw new IllegalArgumentException("can only update NUMERIC or BINARY fields! field=" + f.name());
       }
-      if (!globalFieldNumberMap.contains(f.name(), dvType) && f.name().equals(config.softDeletesField) == false) {
-        throw new IllegalArgumentException("can only update existing docvalues fields! field=" + f.name() + ", type=" + dvType);
+      if (globalFieldNumberMap.contains(f.name(), dvType) == false) {
+        // if this field doesn't exists we try to add it. if it exists and the DV type doesn't match we
+        // get a consistent error message as if you try to do that during an indexing operation.
+        globalFieldNumberMap.addOrGet(f.name(), -1, IndexOptions.NONE, dvType, 0, 0);
+        assert globalFieldNumberMap.contains(f.name(), dvType);
       }
       if (config.getIndexSortFields().contains(f.name())) {
         throw new IllegalArgumentException("cannot update docvalues field involved in the index sort, field=" + f.name() + ", sort=" + config.getIndexSort());
@@ -1806,11 +1808,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable {
   // for test purpose
   final synchronized int getNumBufferedDocuments(){
     return docWriter.getNumDocs();
-  }
-
-  // for test purpose
-  final synchronized Collection<String> getIndexFileNames() throws IOException {
-    return segmentInfos.files(true);
   }
 
   // for test purpose
@@ -2653,6 +2650,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable {
         try {
           if (isFullyDeleted(rld)) {
             dropDeletedSegment(newSegment);
+            checkpoint();
           }
         } finally {
           release(rld);

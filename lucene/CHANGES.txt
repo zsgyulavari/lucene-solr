@@ -115,6 +115,10 @@ API Changes
 * LUCENE-8303: LiveDocsFormat is now only responsible for (de)serialization of
   live docs. (Adrien Grand)
 
+Changes in Runtime Behavior
+
+* LUCENE-8309: Live docs are no longer backed by a FixedBitSet. (Adrien Grand)
+
 New Features
 
 * LUCENE-8200: Allow doc-values to be updated atomically together
@@ -179,8 +183,15 @@ New Features
   filters based on the attributes of the current token. This generalises the keyword
   token logic currently used for stemmers and WDF.  It is integrated into 
   CustomAnalyzer by using the `when` and `whenTerm` builder methods, and a new
-  TermExclusionConditionalFilter is added as an example.  (Alan Woodward,
-  Robert Muir, David Smiley, Steve Rowe, Mike Sokolov)
+  ProtectedTermFilter is added as an example.  (Alan Woodward, Robert Muir,
+  David Smiley, Steve Rowe, Mike Sokolov)
+
+* LUCENE-8310: Ensure IndexFileDeleter accounts for pending deletes. Today we fail
+  creating the IndexWriter when the directory has a pending delete. Yet, this
+  is mainly done to prevent writing still existing files more than once.
+  IndexFileDeleter already accounts for that for existing files which we can
+  now use to also take pending deletes into account which ensures that all file
+  generations per segment always go forward. (Simon Willnauer)
 
 Bug Fixes
 
@@ -208,6 +219,16 @@ Bug Fixes
   that rewrites to a MatchNoDocsQuery instead of throwing an exception.
   (Bjarke Mortensen, Andy Tran via David Smiley)
 
+* LUCENE-8287: Ensure that empty regex completion queries always return no results.
+  (Julie Tibshirani via Jim Ferenczi)
+
+* LUCENE-8317: Prevent concurrent deletes from being applied during full flush.
+  Future deletes could potentially be exposed to flushes/commits/refreshes if the 
+  amount of RAM used by deletes is greater than half of the IW RAM buffer. (Simon Willnauer)
+
+* LUCENE-8320: Fix WindowsFS to correctly account for rename and hardlinks. 
+  (Simon Willnauer, Nhat Nguyen)
+
 Other
 
 * LUCENE-8301: Update randomizedtesting to 2.6.0. (Dawid Weiss)
@@ -229,6 +250,13 @@ Other
 
 * LUCENE-8122, LUCENE-8175: Upgrade analysis/icu to ICU 61.1.
   (Robert Muir, Adrien Grand, Uwe Schindler)
+
+* LUCENE-8291: Remove QueryTemplateManager utility class from XML queryparser.
+  This class is just a general XML transforming tool (using property files and
+  XSLT) and has nothing to do with query parsing. It can easily be implemented
+  using more sophisticated libraries or using XSL transformers from the JDK.
+  This change also removes the Lucene demo webapp to prevent XSS issues in
+  untested/unmaintained code. (Uwe Schindler)
 
 Build
 
@@ -891,6 +919,9 @@ Other
 * LUCENE-7876: Avoid calls to LeafReader.fields() and MultiFields.getFields()
   that are trivially replaced by LeafReader.terms() and MultiFields.getTerms()
   (David Smiley)
+
+======================= Lucene 6.6.4 =======================
+(No Changes)
 
 ======================= Lucene 6.6.3 =======================
 

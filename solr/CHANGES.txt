@@ -116,6 +116,9 @@ New Features
 
 * SOLR-11277: Add auto hard-commit settings based on tlog size (Rupa Shankar, Anshum Gupta)
 
+* SOLR-9480: A new 'relatedness()' aggregate function for JSON Faceting to enable building Semantic
+  Knowledge Graphs. (Trey Grainger, hossman)
+
 Bug Fixes
 ----------------------
 
@@ -221,6 +224,12 @@ Bug Fixes
 * SOLR-12307: exiting OverseerTriggerThread without endless noise in log when Zookeeper session is expired
   (Mikhail Khludnev) 
 
+* SOLR-12200: abandon OverseerExitThread when ZkController is closed. (Mikhail Khludnev) 
+
+* SOLR-12355: Fixes hash conflict in HashJoinStream and OuterHashJoinStream (Dennis Gove)
+
+* SOLR-12377: Don't spin off overseer when Zk controller is closed (Mikhail Khludnev)
+
 Optimizations
 ----------------------
 
@@ -238,6 +247,9 @@ Optimizations
   (Jeff Miller, David Smiley)
 
 * SOLR-12333: Removed redundant lines for handling lists in JSON reponse writers. (David Smiley via Mikhail Khludnev)
+
+* SOLR-11880: Avoid creating new exceptions for every request made to MDCAwareThreadPoolExecutor by distributed
+  search and update operations. (Varun Thacker, shalin)
 
 Other Changes
 ----------------------
@@ -333,8 +345,8 @@ Bug Fixes
 
 * SOLR-12202: Fix errors in solr-exporter.cmd. (Minoru Osuka via koji)
 
-* SOLR-12316: Do not allow to use absolute URIs for including other files in solrconfig.xml and schema parsing.
-  (Ananthesh, Ishan Chattopadhyaya, Uwe Schindler)  
+* SOLR-12316: Do not allow to use absolute URIs for including other files in solrconfig.xml
+  and schema parsing (CVE-2018-8010).  (Ananthesh, Ishan Chattopadhyaya, Uwe Schindler)  
 
 ==================  7.3.0 ==================
 
@@ -2050,6 +2062,25 @@ Other Changes
   (Uwe Schindler)
 
 * SOLR-11324: Clean up mention of trie fields in documentation and source comments. (Steve Rowe)
+
+==================  6.6.4 ==================
+
+Consult the LUCENE_CHANGES.txt file for additional, low level, changes in this release.
+
+Versions of Major Components
+---------------------
+Apache Tika 1.17
+Carrot2 3.15.0
+Velocity 1.7 and Velocity Tools 2.0
+Apache UIMA 2.3.1
+Apache ZooKeeper 3.4.11
+Jetty 9.4.10.v20180503
+
+Bug Fixes
+----------------------
+
+* SOLR-12316: Do not allow to use absolute URIs for including other files in solrconfig.xml and schema parsing.
+  (Ananthesh, Ishan Chattopadhyaya, Uwe Schindler)
 
 ==================  6.6.3 ==================
 
