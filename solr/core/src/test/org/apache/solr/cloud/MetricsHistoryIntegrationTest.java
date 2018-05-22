@@ -57,7 +57,7 @@ public class MetricsHistoryIntegrationTest extends SolrCloudTestCase {
 
   @BeforeClass
   public static void setupCluster() throws Exception {
-    boolean simulated = random().nextBoolean() || true;
+    boolean simulated = random().nextBoolean() && false;
     if (simulated) {
       cloudManager = SimCloudManager.createCluster(1, TimeSource.get("simTime:50"));
       solrClient = ((SimCloudManager)cloudManager).simGetSolrClient();

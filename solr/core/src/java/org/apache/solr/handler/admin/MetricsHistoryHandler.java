@@ -53,6 +53,7 @@ import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.cloud.NodeStateProvider;
 import org.apache.solr.client.solrj.cloud.SolrCloudManager;
 import org.apache.solr.client.solrj.cloud.autoscaling.ReplicaInfo;
+import org.apache.solr.client.solrj.cloud.autoscaling.Suggestion;
 import org.apache.solr.client.solrj.cloud.autoscaling.VersionedData;
 import org.apache.solr.cloud.Overseer;
 import org.apache.solr.common.SolrException;
@@ -121,6 +122,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
 
   public static final String NUM_SHARDS_KEY = "numShards";
   public static final String NUM_REPLICAS_KEY = "numReplicas";
+  public static final String NUM_NODES_KEY = "numNodes";
 
   public static final List<String> DEFAULT_COLLECTION_GAUGES = new ArrayList<String>() {{
     add(NUM_SHARDS_KEY);
@@ -391,6 +393,10 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
       gauges.get(g.toString()).forEach(name ->
           def.addDatasource(name, DsType.GAUGE, collectPeriod * 2, Double.NaN, Double.NaN));
     }
+    if (groups.contains(Group.node)) {
+      // add nomNodes gauge
+      def.addDatasource(NUM_NODES_KEY, DsType.GAUGE, collectPeriod * 2, Double.NaN, Double.NaN);
+    }
 
     // add archives
 
@@ -453,6 +459,10 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
           replicas.forEach(ri -> {
             collTags.forEach(tag -> {
               double value = ((Number)ri.getVariable(tag, 0.0)).doubleValue();
+              // TODO: fix this when Suggestion.Condition.DISK_IDX uses proper conversion
+              if (tag.contains(Suggestion.coreidxsize)) {
+                value = value * 1024.0 * 1024.0 * 1024.0;
+              }
               DoubleAdder adder = (DoubleAdder)perReg.computeIfAbsent(tag, t -> new DoubleAdder());
               adder.add(value);
             });
@@ -477,6 +487,14 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
         });
       }
     }
+
+    // add numNodes
+    String nodeReg = SolrMetricManager.getRegistryName(Group.node);
+    Map<String, Number> perNodeReg = totals
+        .computeIfAbsent(Group.node, gr -> new HashMap<>())
+        .computeIfAbsent(nodeReg, r -> new HashMap<>());
+    perNodeReg.put(NUM_NODES_KEY, nodes.size());
+
     // add some global collection-level stats
     try {
       ClusterState state = cloudManager.getClusterStateProvider().getClusterState();
