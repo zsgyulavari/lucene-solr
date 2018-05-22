@@ -100,7 +100,6 @@ import org.apache.solr.logging.MDCLoggingContext;
 import org.apache.solr.metrics.SolrCoreMetricManager;
 import org.apache.solr.metrics.SolrMetricManager;
 import org.apache.solr.metrics.SolrMetricProducer;
-import org.apache.solr.metrics.rrd.SolrRrdBackendFactory;
 import org.apache.solr.request.SolrRequestHandler;
 import org.apache.solr.search.SolrFieldCacheBean;
 import org.apache.solr.security.AuthenticationPlugin;
@@ -553,10 +552,17 @@ public class CoreContainer {
     metricsHandler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), metricTag, METRICS_PATH);
 
     if (isZooKeeperAware()) {
+      PluginInfo plugin = cfg.getMetricsConfig().getHistoryHandler();
+      Map<String, Object> initArgs;
+      if (plugin != null && plugin.initArgs != null) {
+        initArgs = plugin.initArgs.asMap(5);
+        initArgs.put(MetricsHistoryHandler.ENABLE_PROP, plugin.isEnabled());
+      } else {
+        initArgs = Collections.emptyMap();
+      }
       metricsHistoryHandler = new MetricsHistoryHandler(getZkController().getNodeName(), metricsHandler,
           new CloudSolrClient.Builder(Collections.singletonList(getZkController().getZkServerAddress()), Optional.empty())
-      .withHttpClient(updateShardHandler.getDefaultHttpClient()).build(), getZkController().getSolrCloudManager(),
-          MetricsHistoryHandler.DEFAULT_COLLECT_PERIOD, SolrRrdBackendFactory.DEFAULT_SYNC_PERIOD);
+      .withHttpClient(updateShardHandler.getDefaultHttpClient()).build(), getZkController().getSolrCloudManager(), initArgs);
       containerHandlers.put(METRICS_HISTORY_PATH, metricsHistoryHandler);
       metricsHistoryHandler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), metricTag, METRICS_HISTORY_PATH);
     }

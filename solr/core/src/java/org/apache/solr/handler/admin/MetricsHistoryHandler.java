@@ -28,17 +28,21 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.DoubleAdder;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -46,11 +50,17 @@ import com.google.common.annotations.VisibleForTesting;
 import org.apache.solr.api.Api;
 import org.apache.solr.api.ApiBag;
 import org.apache.solr.client.solrj.SolrClient;
+import org.apache.solr.client.solrj.cloud.NodeStateProvider;
 import org.apache.solr.client.solrj.cloud.SolrCloudManager;
+import org.apache.solr.client.solrj.cloud.autoscaling.ReplicaInfo;
+import org.apache.solr.client.solrj.cloud.autoscaling.VersionedData;
+import org.apache.solr.cloud.Overseer;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.cloud.ClusterState;
 import org.apache.solr.common.cloud.DocCollection;
 import org.apache.solr.common.cloud.Replica;
+import org.apache.solr.common.cloud.Slice;
+import org.apache.solr.common.cloud.ZkNodeProps;
 import org.apache.solr.common.params.CollectionAdminParams;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
@@ -67,6 +77,7 @@ import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.security.AuthorizationContext;
 import org.apache.solr.security.PermissionNameProvider;
 import org.apache.solr.util.DefaultSolrThreadFactory;
+import org.apache.zookeeper.KeeperException;
 import org.rrd4j.ConsolFun;
 import org.rrd4j.DsType;
 import org.rrd4j.core.ArcDef;
@@ -84,6 +95,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import static java.util.stream.Collectors.toMap;
+import static org.apache.solr.common.params.CommonParams.ID;
 
 /**
  *
@@ -107,38 +119,77 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     add("os.systemLoadAverage");
   }};
 
+  public static final String NUM_SHARDS_KEY = "numShards";
+  public static final String NUM_REPLICAS_KEY = "numReplicas";
+
+  public static final List<String> DEFAULT_COLLECTION_GAUGES = new ArrayList<String>() {{
+    add(NUM_SHARDS_KEY);
+    add(NUM_REPLICAS_KEY);
+  }};
+
+  public static final String COLLECT_PERIOD_PROP = "collectPeriod";
+  public static final String SYNC_PERIOD_PROP = "syncPeriod";
+  public static final String ENABLE_PROP = "enable";
+  public static final String ENABLE_REPLICAS_PROP = "enableReplicas";
+  public static final String ENABLE_NODES_PROP = "enableNodes";
+
   public static final int DEFAULT_COLLECT_PERIOD = 60;
   public static final String URI_PREFIX = "solr:";
 
   private final SolrRrdBackendFactory factory;
+  private final String nodeName;
   private final SolrClient solrClient;
   private final MetricsHandler metricsHandler;
   private final SolrCloudManager cloudManager;
-  private final ScheduledThreadPoolExecutor collectService;
   private final TimeSource timeSource;
   private final int collectPeriod;
   private final Map<String, List<String>> counters = new HashMap<>();
   private final Map<String, List<String>> gauges = new HashMap<>();
 
+  private ScheduledThreadPoolExecutor collectService;
   private boolean logMissingCollection = true;
+  private boolean enable;
+  private boolean enableReplicas;
+  private boolean enableNodes;
   private String versionString;
 
   public MetricsHistoryHandler(String nodeName, MetricsHandler metricsHandler,
-                               SolrClient solrClient, SolrCloudManager cloudManager, int collectPeriod, int syncPeriod) {
-    factory = new SolrRrdBackendFactory(nodeName, solrClient, CollectionAdminParams.SYSTEM_COLL,
+        SolrClient solrClient, SolrCloudManager cloudManager, Map<String, Object> pluginArgs) {
+
+    Map<String, Object> args = new HashMap<>();
+    // init from optional solr.xml config
+    if (pluginArgs != null) {
+      args.putAll(pluginArgs);
+    }
+    // override from ZK
+    Map<String, Object> props = (Map<String, Object>)cloudManager.getClusterStateProvider()
+        .getClusterProperty("metrics", Collections.emptyMap())
+        .getOrDefault("history", Collections.emptyMap());
+    args.putAll(props);
+
+    this.nodeName = nodeName;
+    this.enable = Boolean.parseBoolean(String.valueOf(args.getOrDefault(ENABLE_PROP, "true")));
+    // default to false - don't collect local per-replica metrics
+    this.enableReplicas = Boolean.parseBoolean(String.valueOf(args.getOrDefault(ENABLE_REPLICAS_PROP, "false")));
+    this.enableNodes = Boolean.parseBoolean(String.valueOf(args.getOrDefault(ENABLE_NODES_PROP, "false")));
+    this.collectPeriod = Integer.parseInt(String.valueOf(args.getOrDefault(COLLECT_PERIOD_PROP, DEFAULT_COLLECT_PERIOD)));
+    int syncPeriod = Integer.parseInt(String.valueOf(args.getOrDefault(SYNC_PERIOD_PROP, SolrRrdBackendFactory.DEFAULT_SYNC_PERIOD)));
+
+    factory = new SolrRrdBackendFactory(solrClient, CollectionAdminParams.SYSTEM_COLL,
             syncPeriod, cloudManager.getTimeSource());
     this.solrClient = solrClient;
     this.metricsHandler = metricsHandler;
     this.cloudManager = cloudManager;
-    this.collectPeriod = collectPeriod;
     this.timeSource = cloudManager.getTimeSource();
 
     counters.put(Group.core.toString(), DEFAULT_CORE_COUNTERS);
     counters.put(Group.node.toString(), Collections.emptyList());
     counters.put(Group.jvm.toString(), Collections.emptyList());
+    counters.put(Group.collection.toString(), Collections.emptyList());
     gauges.put(Group.core.toString(), DEFAULT_CORE_GAUGES);
     gauges.put(Group.node.toString(), DEFAULT_NODE_GAUGES);
     gauges.put(Group.jvm.toString(), DEFAULT_JVM_GAUGES);
+    gauges.put(Group.collection.toString(), DEFAULT_COLLECTION_GAUGES);
 
     versionString = this.getClass().getPackage().getImplementationVersion();
     if (versionString == null) {
@@ -148,14 +199,16 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
       versionString = versionString.substring(0, 24) + "...";
     }
 
-    collectService = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(1,
-        new DefaultSolrThreadFactory("MetricsHistoryHandler"));
-    collectService.setRemoveOnCancelPolicy(true);
-    collectService.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
-    collectService.scheduleWithFixedDelay(() -> collectMetrics(),
-        timeSource.convertDelay(TimeUnit.SECONDS, collectPeriod, TimeUnit.MILLISECONDS),
-        timeSource.convertDelay(TimeUnit.SECONDS, collectPeriod, TimeUnit.MILLISECONDS),
-        TimeUnit.MILLISECONDS);
+    if (enable) {
+      collectService = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(1,
+          new DefaultSolrThreadFactory("MetricsHistoryHandler"));
+      collectService.setRemoveOnCancelPolicy(true);
+      collectService.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+      collectService.scheduleWithFixedDelay(() -> collectMetrics(),
+          timeSource.convertDelay(TimeUnit.SECONDS, collectPeriod, TimeUnit.MILLISECONDS),
+          timeSource.convertDelay(TimeUnit.SECONDS, collectPeriod, TimeUnit.MILLISECONDS),
+          TimeUnit.MILLISECONDS);
+    }
   }
 
   public SolrClient getSolrClient() {
@@ -165,6 +218,36 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
   @VisibleForTesting
   public SolrRrdBackendFactory getFactory() {
     return factory;
+  }
+
+  private boolean isOverseerLeader() {
+    ZkNodeProps props = null;
+    try {
+      VersionedData data = cloudManager.getDistribStateManager().getData(
+          Overseer.OVERSEER_ELECT + "/leader");
+      if (data != null && data.getData() != null) {
+        props = ZkNodeProps.load(data.getData());
+      }
+    } catch (KeeperException | IOException | NoSuchElementException e) {
+      log.warn("Could not obtain overseer's address, skipping.", e);
+      return false;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    }
+    if (props == null) {
+      return false;
+    }
+    String oid = props.getStr(ID);
+    if (oid == null) {
+      return false;
+    }
+    String[] ids = oid.split("-");
+    if (ids.length != 3) { // unknown format
+      log.warn("Unknown format of leader id, skipping: " + oid);
+      return false;
+    }
+    return nodeName.equals(ids[1]);
   }
 
   private void collectMetrics() {
@@ -205,11 +288,24 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     }
     logMissingCollection = true;
     // get metrics
-    for (Group group : Arrays.asList(Group.jvm, Group.core, Group.node)) {
+    collectLocalReplicaMetrics();
+    collectGlobalMetrics();
+  }
+
+  private void collectLocalReplicaMetrics() {
+    List<Group> groups = new ArrayList<>();
+    if (enableNodes) {
+      groups.add(Group.jvm);
+      groups.add(Group.node);
+    }
+    if (enableReplicas) {
+      groups.add(Group.core);
+    }
+    for (Group group : groups) {
       if (Thread.interrupted()) {
         return;
       }
-      log.debug("--  collecting " + group + "...");
+      log.debug("--  collecting local " + group + "...");
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.add(MetricsHandler.GROUP_PARAM, group.toString());
       params.add(MetricsHandler.COMPACT_PARAM, "true");
@@ -226,7 +322,11 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
         if (nl != null) {
           for (Iterator<Map.Entry<String, Object>> it = nl.iterator(); it.hasNext(); ) {
             Map.Entry<String, Object> entry = it.next();
-            final String registry = entry.getKey();
+            String reg = entry.getKey();
+            if (group != Group.core) { // add nodeName prefix
+              reg = reg + "." + nodeName;
+            }
+            final String registry = reg;
             RrdDb db = metricManager.getOrCreateMetricHistory(registry, () -> {
               RrdDef def = createDef(registry, group);
               try {
@@ -279,12 +379,18 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     def.setStartTime(TimeUnit.SECONDS.convert(timeSource.getEpochTimeNs(), TimeUnit.NANOSECONDS) - def.getStep());
 
     // add datasources
-
-    // use NaN when more than 1 sample is missing
-    counters.get(group.toString()).forEach(c ->
-        def.addDatasource(c, DsType.COUNTER, collectPeriod * 2, Double.NaN, Double.NaN));
-    gauges.get(group.toString()).forEach(g ->
-        def.addDatasource(g, DsType.GAUGE, collectPeriod * 2, Double.NaN, Double.NaN));
+    List<Group> groups = new ArrayList<>();
+    groups.add(group);
+    if (group == Group.collection) {
+      groups.add(Group.core);
+    }
+    for (Group g : groups) {
+      // use NaN when more than 1 sample is missing
+      counters.get(g.toString()).forEach(name ->
+          def.addDatasource(name, DsType.COUNTER, collectPeriod * 2, Double.NaN, Double.NaN));
+      gauges.get(g.toString()).forEach(name ->
+          def.addDatasource(name, DsType.GAUGE, collectPeriod * 2, Double.NaN, Double.NaN));
+    }
 
     // add archives
 
@@ -296,6 +402,152 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     def.addArchive(ConsolFun.AVERAGE, 0.5, 240, 180); // 2 months
     def.addArchive(ConsolFun.AVERAGE, 0.5, 1440, 365); // 1 year
     return def;
+  }
+
+  private void collectGlobalMetrics() {
+    if (!isOverseerLeader()) {
+      return;
+    }
+    Set<String> nodes = new HashSet<>(cloudManager.getClusterStateProvider().getLiveNodes());
+    NodeStateProvider nodeStateProvider = cloudManager.getNodeStateProvider();
+    Set<String> collTags = new HashSet<>();
+    collTags.addAll(counters.get(Group.core.toString()));
+    collTags.addAll(gauges.get(Group.core.toString()));
+
+    Set<String> nodeTags = new HashSet<>();
+    String nodePrefix = "metrics:" + SolrMetricManager.getRegistryName(Group.node) + ":";
+    counters.get(Group.node.toString()).forEach(name -> {
+      nodeTags.add(nodePrefix + name);
+    });
+    gauges.get(Group.node.toString()).forEach(name -> {
+      nodeTags.add(nodePrefix + name);
+    });
+    String jvmPrefix = "metrics:" + SolrMetricManager.getRegistryName(Group.jvm) + ":";
+    counters.get(Group.jvm.toString()).forEach(name -> {
+      nodeTags.add(jvmPrefix + name);
+    });
+    gauges.get(Group.jvm.toString()).forEach(name -> {
+      nodeTags.add(jvmPrefix + name);
+    });
+
+    // per-registry totals
+    // XXX at the moment the type of metrics that we collect allows
+    // adding all partial values. At some point it may be necessary to implement
+    // other aggregation functions.
+    // group : registry : name : value
+    Map<Group, Map<String, Map<String, Number>>> totals = new HashMap<>();
+
+    // collect and aggregate per-collection totals
+    for (String node : nodes) {
+      if (cloudManager.isClosed() || Thread.interrupted()) {
+        return;
+      }
+      // add core-level stats
+      Map<String, Map<String, List<ReplicaInfo>>> infos = nodeStateProvider.getReplicaInfo(node, collTags);
+      infos.forEach((coll, shards) -> {
+        shards.forEach((sh, replicas) -> {
+          String registry = SolrMetricManager.getRegistryName(Group.collection, coll);
+          Map<String, Number> perReg = totals
+              .computeIfAbsent(Group.collection, g -> new HashMap<>())
+              .computeIfAbsent(registry, r -> new HashMap<>());
+          replicas.forEach(ri -> {
+            collTags.forEach(tag -> {
+              double value = ((Number)ri.getVariable(tag, 0.0)).doubleValue();
+              DoubleAdder adder = (DoubleAdder)perReg.computeIfAbsent(tag, t -> new DoubleAdder());
+              adder.add(value);
+            });
+          });
+        });
+      });
+      // add node-level stats
+      Map<String, Object> nodeValues = nodeStateProvider.getNodeValues(node, nodeTags);
+      for (Group g : Arrays.asList(Group.node, Group.jvm)) {
+        String registry = SolrMetricManager.getRegistryName(g);
+        Map<String, Number> perReg = totals
+            .computeIfAbsent(g, gr -> new HashMap<>())
+            .computeIfAbsent(registry, r -> new HashMap<>());
+        Set<String> names = new HashSet<>();
+        names.addAll(counters.get(g.toString()));
+        names.addAll(gauges.get(g.toString()));
+        names.forEach(name -> {
+          String tag = "metrics:" + registry + ":" + name;
+          double value = ((Number)nodeValues.getOrDefault(tag, 0.0)).doubleValue();
+          DoubleAdder adder = (DoubleAdder)perReg.computeIfAbsent(name, t -> new DoubleAdder());
+          adder.add(value);
+        });
+      }
+    }
+    // add some global collection-level stats
+    try {
+      ClusterState state = cloudManager.getClusterStateProvider().getClusterState();
+      state.forEachCollection(coll -> {
+        String registry = SolrMetricManager.getRegistryName(Group.collection, coll.getName());
+        Map<String, Number> perReg = totals
+            .computeIfAbsent(Group.collection, g -> new HashMap<>())
+            .computeIfAbsent(registry, r -> new HashMap<>());
+        Collection<Slice> slices = coll.getActiveSlices();
+        perReg.put(NUM_SHARDS_KEY, slices.size());
+        DoubleAdder numActiveReplicas = new DoubleAdder();
+        slices.forEach(s -> {
+          s.forEach(r -> {
+            if (r.isActive(state.getLiveNodes())) {
+              numActiveReplicas.add(1.0);
+            }
+          });
+        });
+        perReg.put(NUM_REPLICAS_KEY, numActiveReplicas);
+      });
+    } catch (IOException e) {
+      log.warn("Exception getting cluster state", e);
+    }
+
+    // now update the db-s
+    totals.forEach((group, perGroup) -> {
+      perGroup.forEach((reg, perReg) -> {
+        RrdDb db = metricManager.getOrCreateMetricHistory(reg, () -> {
+          RrdDef def = createDef(reg, group);
+          try {
+            RrdDb newDb = new RrdDb(def, factory);
+            return newDb;
+          } catch (IOException e) {
+            return null;
+          }
+        });
+        if (db == null) {
+          return;
+        }
+        try {
+          // set the timestamp
+          Sample s = db.createSample(TimeUnit.SECONDS.convert(timeSource.getEpochTimeNs(), TimeUnit.NANOSECONDS));
+          AtomicBoolean dirty = new AtomicBoolean(false);
+          List<Group> groups = new ArrayList<>();
+          groups.add(group);
+          if (group == Group.collection) {
+            groups.add(Group.core);
+          }
+          for (Group g : groups) {
+            counters.get(g.toString()).forEach(c -> {
+              Number val = perReg.get(c);
+              if (val != null) {
+                dirty.set(true);
+                s.setValue(c, val.doubleValue());
+              }
+            });
+            gauges.get(g.toString()).forEach(c -> {
+              Number val = perReg.get(c);
+              if (val != null) {
+                dirty.set(true);
+                s.setValue(c, val.doubleValue());
+              }
+            });
+          }
+          if (dirty.get()) {
+            s.update();
+          }
+        } catch (Exception e) {
+        }
+      });
+    });
   }
 
   @Override

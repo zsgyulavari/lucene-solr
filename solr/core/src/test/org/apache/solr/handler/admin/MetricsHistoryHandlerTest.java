@@ -17,7 +17,9 @@
 
 package org.apache.solr.handler.admin;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.cloud.SolrCloudManager;
@@ -56,6 +58,9 @@ public class MetricsHistoryHandlerTest extends SolrCloudTestCase {
   @BeforeClass
   public static void beforeClass() throws Exception {
     simulated = random().nextBoolean();
+    Map<String, Object> args = new HashMap<>();
+    args.put(MetricsHistoryHandler.SYNC_PERIOD_PROP, 1);
+    args.put(MetricsHistoryHandler.COLLECT_PERIOD_PROP, 1);
     if (simulated) {
       SPEED = 50;
       cloudManager = SimCloudManager.createCluster(1, TimeSource.get("simTime:" + SPEED));
@@ -67,7 +72,8 @@ public class MetricsHistoryHandlerTest extends SolrCloudTestCase {
       solrClient = ((SimCloudManager)cloudManager).simGetSolrClient();
       // need to register the factory here, before we start the real cluster
       metricsHandler = new MetricsHandler(metricManager);
-      handler = new MetricsHistoryHandler("localhost:1234_solr", metricsHandler, solrClient, cloudManager, 1, 1);
+      handler = new MetricsHistoryHandler(cloudManager.getClusterStateProvider().getLiveNodes().iterator().next(),
+          metricsHandler, solrClient, cloudManager, args);
       handler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), "", CommonParams.METRICS_HISTORY_PATH);
     }
     configureCluster(1)
@@ -78,7 +84,7 @@ public class MetricsHistoryHandlerTest extends SolrCloudTestCase {
       metricManager = cluster.getJettySolrRunner(0).getCoreContainer().getMetricManager();
       solrClient = cluster.getSolrClient();
       metricsHandler = new MetricsHandler(metricManager);
-      handler = new MetricsHistoryHandler(cluster.getJettySolrRunner(0).getNodeName(), metricsHandler, solrClient, cloudManager, 1, 1);
+      handler = new MetricsHistoryHandler(cluster.getJettySolrRunner(0).getNodeName(), metricsHandler, solrClient, cloudManager, args);
       handler.initializeMetrics(metricManager, SolrInfoBean.Group.node.toString(), "", CommonParams.METRICS_HISTORY_PATH);
       SPEED = 1;
     }
@@ -106,6 +112,7 @@ public class MetricsHistoryHandlerTest extends SolrCloudTestCase {
   public void testBasic() throws Exception {
     timeSource.sleep(10000);
     List<String> list = handler.getFactory().list(100);
+    // solr.jvm, solr.node, solr.collection..system
     assertEquals(list.toString(), 3, list.size());
     for (String path : list) {
       RrdDb db = new RrdDb(MetricsHistoryHandler.URI_PREFIX + path, true, handler.getFactory());

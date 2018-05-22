@@ -46,7 +46,7 @@ public class MockSearchableSolrClient extends SolrClient {
   }
 
   @Override
-  public NamedList<Object> request(SolrRequest request, String coll) throws SolrServerException, IOException {
+  public synchronized NamedList<Object> request(SolrRequest request, String coll) throws SolrServerException, IOException {
     if (coll == null) {
       coll = request.getParams().get("collection");
     }

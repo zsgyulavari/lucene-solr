@@ -75,9 +75,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
   public static final String DOC_TYPE = "metrics_rrd";
 
   public static final String DATA_FIELD = "data_bin";
-  public static final String NODE_FIELD = "node_s";
 
-  private final String nodeName;
   private final SolrClient solrClient;
   private final TimeSource timeSource;
   private final String collection;
@@ -90,23 +88,20 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
 
   /**
    * Create a factory.
-   * @param nodeName node name. Documents are stored in a distributed collection and
-   *                 this parameter is needed to avoid namespace conflicts.
    * @param solrClient SolrClient to use
-   * @param collection collection name where documents are stored (typicall this is
+   * @param collection collection name where documents are stored (typically this is
    *                   {@link CollectionAdminParams#SYSTEM_COLL})
    * @param syncPeriod synchronization period in seconds - how often modified
    *                   databases are stored as updated Solr documents
    * @param timeSource time source
    */
-  public SolrRrdBackendFactory(String nodeName, SolrClient solrClient, String collection, int syncPeriod, TimeSource timeSource) {
-    this.nodeName = nodeName;
+  public SolrRrdBackendFactory(SolrClient solrClient, String collection, int syncPeriod, TimeSource timeSource) {
     this.solrClient = solrClient;
     this.timeSource = timeSource;
     this.collection = collection;
     this.syncPeriod = syncPeriod;
     log.debug("Created " + hashCode());
-    this.idPrefixLength = ID_PREFIX.length() + ID_SEP.length() + nodeName.length() + ID_SEP.length();
+    this.idPrefixLength = ID_PREFIX.length() + ID_SEP.length();
     syncService = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(2,
         new DefaultSolrThreadFactory("SolrRrdBackendFactory"));
     syncService.setRemoveOnCancelPolicy(true);
@@ -115,10 +110,6 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
         timeSource.convertDelay(TimeUnit.SECONDS, syncPeriod, TimeUnit.MILLISECONDS),
         timeSource.convertDelay(TimeUnit.SECONDS, syncPeriod, TimeUnit.MILLISECONDS),
         TimeUnit.MILLISECONDS);
-  }
-
-  public String getNodeName() {
-    return nodeName;
   }
 
   private void ensureOpen() throws IOException {
@@ -191,7 +182,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
   byte[] getData(String path) throws IOException {
     try {
       ModifiableSolrParams params = new ModifiableSolrParams();
-      params.add(CommonParams.Q, "{!term f=id}" + ID_PREFIX + ID_SEP + nodeName + ID_SEP + path);
+      params.add(CommonParams.Q, "{!term f=id}" + ID_PREFIX + ID_SEP + path);
       params.add(CommonParams.FQ, CommonParams.TYPE + ":" + DOC_TYPE);
       QueryResponse rsp = solrClient.query(collection, params);
       SolrDocumentList docs = rsp.getResults();
@@ -232,7 +223,6 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.add(CommonParams.Q, "*:*");
       params.add(CommonParams.FQ, CommonParams.TYPE + ":" + DOC_TYPE);
-      params.add(CommonParams.FQ, "{!term f=" + NODE_FIELD + "}:" + nodeName);
       params.add(CommonParams.FL, "id");
       params.add(CommonParams.ROWS, String.valueOf(maxLength));
       QueryResponse rsp = solrClient.query(collection, params);
@@ -263,9 +253,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     // remove all Solr docs
     try {
       solrClient.deleteByQuery(collection,
-          "{!term f=" + CommonParams.TYPE + "}:" + DOC_TYPE +
-          " AND {!term f=" + NODE_FIELD + "}:" + nodeName,
-          syncPeriod * 1000);
+          "{!term f=" + CommonParams.TYPE + "}:" + DOC_TYPE, syncPeriod * 1000);
     } catch (SolrServerException e) {
       log.warn("Error deleting RRDs", e);
     }
@@ -283,7 +271,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     }
     // remove Solr doc
     try {
-      solrClient.deleteByQuery(collection, "{!term f=id}" + ID_PREFIX + ID_SEP + nodeName + ID_SEP + path);
+      solrClient.deleteByQuery(collection, "{!term f=id}" + ID_PREFIX + ID_SEP + path);
     } catch (SolrServerException e) {
       log.warn("Error deleting RRD for path " + path, e);
     }
@@ -312,9 +300,8 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     try {
       syncData.forEach((path, data) -> {
         SolrInputDocument doc = new SolrInputDocument();
-        doc.setField("id", ID_PREFIX + ID_SEP + nodeName + ID_SEP + path);
+        doc.setField("id", ID_PREFIX + ID_SEP + path);
         doc.addField(CommonParams.TYPE, DOC_TYPE);
-        doc.addField(NODE_FIELD, nodeName);
         doc.addField(DATA_FIELD, data);
         doc.setField("timestamp", new Date(TimeUnit.MILLISECONDS.convert(timeSource.getEpochTimeNs(), TimeUnit.NANOSECONDS)));
         try {
@@ -357,9 +344,8 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     }
     try {
       ModifiableSolrParams params = new ModifiableSolrParams();
-      params.add(CommonParams.Q, "{!term f=id}" + ID_PREFIX + ID_SEP + nodeName + ID_SEP + path);
+      params.add(CommonParams.Q, "{!term f=id}" + ID_PREFIX + ID_SEP + path);
       params.add(CommonParams.FQ, CommonParams.TYPE + ":" + DOC_TYPE);
-      params.add(CommonParams.FQ, "{!term f=" + NODE_FIELD + "}:" + nodeName);
       params.add(CommonParams.FL, "id");
       QueryResponse rsp = solrClient.query(collection, params);
       SolrDocumentList docs = rsp.getResults();

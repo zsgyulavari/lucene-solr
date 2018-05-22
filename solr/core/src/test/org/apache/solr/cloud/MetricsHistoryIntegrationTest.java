@@ -57,7 +57,7 @@ public class MetricsHistoryIntegrationTest extends SolrCloudTestCase {
 
   @BeforeClass
   public static void setupCluster() throws Exception {
-    boolean simulated = random().nextBoolean();
+    boolean simulated = random().nextBoolean() || true;
     if (simulated) {
       cloudManager = SimCloudManager.createCluster(1, TimeSource.get("simTime:50"));
       solrClient = ((SimCloudManager)cloudManager).simGetSolrClient();
@@ -93,13 +93,13 @@ public class MetricsHistoryIntegrationTest extends SolrCloudTestCase {
   public void testList() throws Exception {
     NamedList<Object> rsp = solrClient.request(createHistoryRequest(params(CommonParams.ACTION, "list")));
     assertNotNull(rsp);
-    // expected solr.jvm, solr.node and solr.core..system replica 1
+    // expected solr.jvm, solr.node and solr.collection..system
     List<String> lst = (List<String>)rsp.get("metrics");
     assertNotNull(lst);
     assertEquals(lst.toString(), 3, lst.size());
     assertTrue(lst.toString(), lst.contains("solr.jvm"));
     assertTrue(lst.toString(), lst.contains("solr.node"));
-    assertTrue(lst.toString(), lst.contains("solr.core..system.shard1.replica_n1"));
+    assertTrue(lst.toString(), lst.contains("solr.collection..system"));
   }
 
   @Test

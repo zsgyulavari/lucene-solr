@@ -92,7 +92,6 @@ import org.apache.solr.metrics.AltBufferPoolMetricSet;
 import org.apache.solr.metrics.MetricsMap;
 import org.apache.solr.metrics.OperatingSystemMetricSet;
 import org.apache.solr.metrics.SolrMetricManager;
-import org.apache.solr.metrics.rrd.SolrRrdBackendFactory;
 import org.apache.solr.request.LocalSolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.util.DefaultSolrThreadFactory;
@@ -116,8 +115,7 @@ public class SimCloudManager implements SolrCloudManager {
   private final DistributedQueueFactory queueFactory;
   private final ObjectCache objectCache = new ObjectCache();
   private final SolrMetricManager metricManager = new SolrMetricManager();
-  private final MetricsHistoryHandler historyHandler;
-  private TimeSource timeSource;
+  private final String metricTag;
 
   private final List<SolrInputDocument> systemColl = Collections.synchronizedList(new ArrayList<>());
   private final MockSearchableSolrClient solrClient;
@@ -128,6 +126,8 @@ public class SimCloudManager implements SolrCloudManager {
   private Overseer.OverseerThread triggerThread;
   private ThreadGroup triggerThreadGroup;
   private SolrResourceLoader loader;
+  private MetricsHistoryHandler historyHandler;
+  private TimeSource timeSource;
 
   private static int nodeIdPort = 10000;
   public static int DEFAULT_DISK = 1000; // 1000 GB
@@ -159,9 +159,10 @@ public class SimCloudManager implements SolrCloudManager {
     stateManager.makePath(ZkStateReader.SOLR_AUTOSCALING_TRIGGER_STATE_PATH);
     stateManager.makePath(ZkStateReader.SOLR_AUTOSCALING_NODE_LOST_PATH);
     stateManager.makePath(ZkStateReader.SOLR_AUTOSCALING_NODE_ADDED_PATH);
+    stateManager.makePath(Overseer.OVERSEER_ELECT);
 
     // register common metrics
-    String metricTag = Integer.toHexString(hashCode());
+    metricTag = Integer.toHexString(hashCode());
     String registryName = SolrMetricManager.getRegistryName(SolrInfoBean.Group.jvm);
     metricManager.registerAll(registryName, new AltBufferPoolMetricSet(), true, "buffers");
     metricManager.registerAll(registryName, new ClassLoadingGaugeSet(), true, "classes");
@@ -223,10 +224,6 @@ public class SimCloudManager implements SolrCloudManager {
     this.simCloudManagerPool = ExecutorUtil.newMDCAwareFixedThreadPool(200, new DefaultSolrThreadFactory("simCloudManagerPool"));
 
     this.autoScalingHandler = new AutoScalingHandler(this, loader);
-    MetricsHandler metricsHandler = new MetricsHandler(metricManager);
-    this.historyHandler = new MetricsHistoryHandler("1.0.0.1:1111_solr", metricsHandler, solrClient, this,
-        MetricsHistoryHandler.DEFAULT_COLLECT_PERIOD, SolrRrdBackendFactory.DEFAULT_SYNC_PERIOD);
-    this.historyHandler.initializeMetrics(metricManager, SolrMetricManager.getRegistryName(SolrInfoBean.Group.node), metricTag, CommonParams.METRICS_HISTORY_PATH);
 
 
     triggerThreadGroup = new ThreadGroup("Simulated Overseer autoscaling triggers");
@@ -247,13 +244,7 @@ public class SimCloudManager implements SolrCloudManager {
   public static SimCloudManager createCluster(int numNodes, TimeSource timeSource) throws Exception {
     SimCloudManager cloudManager = new SimCloudManager(timeSource);
     for (int i = 1; i <= numNodes; i++) {
-      Map<String, Object> values = createNodeValues(null);
-//      if (i == 1) { // designated Overseer ?
-        //values.put(ImplicitSnitch.NODEROLE, "overseer");
-//      }
-      String nodeId = (String)values.get(ImplicitSnitch.NODE);
-      cloudManager.getSimClusterStateProvider().simAddNode(nodeId);
-      cloudManager.getSimNodeStateProvider().simSetNodeValues(nodeId, values);
+      cloudManager.simAddNode();
     }
     return cloudManager;
   }
@@ -405,6 +396,12 @@ public class SimCloudManager implements SolrCloudManager {
     clusterStateProvider.simAddNode(nodeId);
     nodeStateProvider.simSetNodeValues(nodeId, values);
     LOG.trace("-- added node " + nodeId);
+    // initialize history handler if this is the first node
+    if (historyHandler == null && liveNodesSet.size() == 1) {
+      MetricsHandler metricsHandler = new MetricsHandler(metricManager);
+      historyHandler = new MetricsHistoryHandler(nodeId, metricsHandler, solrClient, this, Collections.emptyMap());
+      historyHandler.initializeMetrics(metricManager, SolrMetricManager.getRegistryName(SolrInfoBean.Group.node), metricTag, CommonParams.METRICS_HISTORY_PATH);
+    }
     return nodeId;
   }
 
@@ -672,7 +669,11 @@ public class SimCloudManager implements SolrCloudManager {
         if (autoscaling) {
           autoScalingHandler.handleRequest(queryRequest, queryResponse);
         } else {
-          historyHandler.handleRequest(queryRequest, queryResponse);
+          if (historyHandler != null) {
+            historyHandler.handleRequest(queryRequest, queryResponse);
+          } else {
+            throw new UnsupportedOperationException("must add at least 1 node first");
+          }
         }
         if (queryResponse.getException() != null) {
           LOG.debug("-- exception handling request", queryResponse.getException());
@@ -823,7 +824,9 @@ public class SimCloudManager implements SolrCloudManager {
 
   @Override
   public void close() throws IOException {
-    IOUtils.closeQuietly(historyHandler);
+    if (historyHandler != null) {
+      IOUtils.closeQuietly(historyHandler);
+    }
     IOUtils.closeQuietly(clusterStateProvider);
     IOUtils.closeQuietly(nodeStateProvider);
     IOUtils.closeQuietly(stateManager);

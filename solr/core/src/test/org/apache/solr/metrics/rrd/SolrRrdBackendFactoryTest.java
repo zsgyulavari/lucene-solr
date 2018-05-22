@@ -42,20 +42,19 @@ import org.rrd4j.core.Sample;
  */
 public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
 
-  private static final String nodeName = "localhost:1234_solr";
   private SolrRrdBackendFactory factory;
   private MockSearchableSolrClient solrClient;
   private TimeSource timeSource;
 
   @Before
-  public void setup() throws Exception {
+  public void setup() {
     solrClient = new MockSearchableSolrClient();
     if (random().nextBoolean()) {
       timeSource = TimeSource.NANO_TIME;
     } else {
       timeSource = TimeSource.get("simTime:50");
     }
-    factory = new SolrRrdBackendFactory(nodeName, solrClient, CollectionAdminParams.SYSTEM_COLL, 1, timeSource);
+    factory = new SolrRrdBackendFactory(solrClient, CollectionAdminParams.SYSTEM_COLL, 1, timeSource);
   }
 
   @After
@@ -85,7 +84,7 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
     timeSource.sleep(2000);
     // there should be one sync data
     assertEquals(solrClient.docs.toString(), 1, solrClient.docs.size());
-    String id = SolrRrdBackendFactory.ID_PREFIX + SolrRrdBackendFactory.ID_SEP + nodeName + SolrRrdBackendFactory.ID_SEP + "foo";
+    String id = SolrRrdBackendFactory.ID_PREFIX + SolrRrdBackendFactory.ID_SEP + "foo";
     SolrInputDocument doc = solrClient.docs.get(CollectionAdminParams.SYSTEM_COLL).get(id);
     long timestamp = ((Date)doc.getFieldValue("timestamp")).getTime();
     timeSource.sleep(2000);
