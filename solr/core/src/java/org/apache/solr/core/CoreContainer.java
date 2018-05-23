@@ -483,6 +483,10 @@ public class CoreContainer {
     return metricsHandler;
   }
 
+  public MetricsHistoryHandler getMetricsHistoryHandler() {
+    return metricsHistoryHandler;
+  }
+
   //-------------------------------------------------------------------
   // Initialization / Cleanup
   //-------------------------------------------------------------------
