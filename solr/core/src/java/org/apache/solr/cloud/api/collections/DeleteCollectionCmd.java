@@ -137,7 +137,7 @@ public class DeleteCollectionCmd implements OverseerCollectionMessageHandler.Cmd
         MetricsHistoryHandler historyHandler = ocmh.overseer.getCoreContainer().getMetricsHistoryHandler();
         if (historyHandler != null) {
           String registry = SolrMetricManager.getRegistryName(SolrInfoBean.Group.collection, collection);
-          historyHandler.getFactory().remove(registry);
+          historyHandler.removeHistory(registry);
         }
       }
     } finally {

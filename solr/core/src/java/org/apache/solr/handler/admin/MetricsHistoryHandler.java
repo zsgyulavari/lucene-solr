@@ -37,6 +37,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.TimeZone;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -148,6 +149,8 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
   private final Map<String, List<String>> counters = new HashMap<>();
   private final Map<String, List<String>> gauges = new HashMap<>();
 
+  private final Map<String, RrdDb> knownDbs = new ConcurrentHashMap<>();
+
   private ScheduledThreadPoolExecutor collectService;
   private boolean logMissingCollection = true;
   private boolean enable;
@@ -217,6 +220,12 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     return solrClient;
   }
 
+  public void removeHistory(String registry) throws IOException {
+    registry = SolrMetricManager.overridableRegistryName(registry);
+    knownDbs.remove(registry);
+    factory.remove(registry);
+  }
+
   @VisibleForTesting
   public SolrRrdBackendFactory getFactory() {
     return factory;
@@ -253,10 +262,6 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
   }
 
   private void collectMetrics() {
-    if (metricManager == null) {
-      // not inited yet
-      return;
-    }
     log.debug("-- collectMetrics");
     // check that .system exists
     try {
@@ -324,20 +329,12 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
         if (nl != null) {
           for (Iterator<Map.Entry<String, Object>> it = nl.iterator(); it.hasNext(); ) {
             Map.Entry<String, Object> entry = it.next();
-            String reg = entry.getKey();
+            String registry = entry.getKey();
             if (group != Group.core) { // add nodeName prefix
-              reg = reg + "." + nodeName;
+              registry = registry + "." + nodeName;
             }
-            final String registry = reg;
-            RrdDb db = metricManager.getOrCreateMetricHistory(registry, () -> {
-              RrdDef def = createDef(registry, group);
-              try {
-                RrdDb newDb = new RrdDb(def, factory);
-                return newDb;
-              } catch (IOException e) {
-                return null;
-              }
-            });
+
+            RrdDb db = getOrCreateDb(registry, group);
             if (db == null) {
               continue;
             }
@@ -368,46 +365,6 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
         e.printStackTrace();
       }
     }
-  }
-
-  RrdDef createDef(String registry, Group group) {
-    registry = SolrMetricManager.overridableRegistryName(registry);
-
-    // base sampling period is collectPeriod - samples more frequent than
-    // that will be dropped, samples less frequent will be interpolated
-    RrdDef def = new RrdDef(URI_PREFIX + registry, collectPeriod);
-    // set the start time early enough so that the first sample is always later
-    // than the start of the archive
-    def.setStartTime(TimeUnit.SECONDS.convert(timeSource.getEpochTimeNs(), TimeUnit.NANOSECONDS) - def.getStep());
-
-    // add datasources
-    List<Group> groups = new ArrayList<>();
-    groups.add(group);
-    if (group == Group.collection) {
-      groups.add(Group.core);
-    }
-    for (Group g : groups) {
-      // use NaN when more than 1 sample is missing
-      counters.get(g.toString()).forEach(name ->
-          def.addDatasource(name, DsType.COUNTER, collectPeriod * 2, Double.NaN, Double.NaN));
-      gauges.get(g.toString()).forEach(name ->
-          def.addDatasource(name, DsType.GAUGE, collectPeriod * 2, Double.NaN, Double.NaN));
-    }
-    if (groups.contains(Group.node)) {
-      // add nomNodes gauge
-      def.addDatasource(NUM_NODES_KEY, DsType.GAUGE, collectPeriod * 2, Double.NaN, Double.NaN);
-    }
-
-    // add archives
-
-    // use AVERAGE consolidation,
-    // use NaN when >50% samples are missing
-    def.addArchive(ConsolFun.AVERAGE, 0.5, 1, 240); // 4 hours
-    def.addArchive(ConsolFun.AVERAGE, 0.5, 10, 288); // 48 hours
-    def.addArchive(ConsolFun.AVERAGE, 0.5, 60, 336); // 2 weeks
-    def.addArchive(ConsolFun.AVERAGE, 0.5, 240, 180); // 2 months
-    def.addArchive(ConsolFun.AVERAGE, 0.5, 1440, 365); // 1 year
-    return def;
   }
 
   private void collectGlobalMetrics() {
@@ -522,15 +479,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     // now update the db-s
     totals.forEach((group, perGroup) -> {
       perGroup.forEach((reg, perReg) -> {
-        RrdDb db = metricManager.getOrCreateMetricHistory(reg, () -> {
-          RrdDef def = createDef(reg, group);
-          try {
-            RrdDb newDb = new RrdDb(def, factory);
-            return newDb;
-          } catch (IOException e) {
-            return null;
-          }
-        });
+        RrdDb db = getOrCreateDb(reg, group);
         if (db == null) {
           return;
         }
@@ -568,6 +517,59 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     });
   }
 
+  private RrdDef createDef(String registry, Group group) {
+    registry = SolrMetricManager.overridableRegistryName(registry);
+
+    // base sampling period is collectPeriod - samples more frequent than
+    // that will be dropped, samples less frequent will be interpolated
+    RrdDef def = new RrdDef(URI_PREFIX + registry, collectPeriod);
+    // set the start time early enough so that the first sample is always later
+    // than the start of the archive
+    def.setStartTime(TimeUnit.SECONDS.convert(timeSource.getEpochTimeNs(), TimeUnit.NANOSECONDS) - def.getStep());
+
+    // add datasources
+    List<Group> groups = new ArrayList<>();
+    groups.add(group);
+    if (group == Group.collection) {
+      groups.add(Group.core);
+    }
+    for (Group g : groups) {
+      // use NaN when more than 1 sample is missing
+      counters.get(g.toString()).forEach(name ->
+          def.addDatasource(name, DsType.COUNTER, collectPeriod * 2, Double.NaN, Double.NaN));
+      gauges.get(g.toString()).forEach(name ->
+          def.addDatasource(name, DsType.GAUGE, collectPeriod * 2, Double.NaN, Double.NaN));
+    }
+    if (groups.contains(Group.node)) {
+      // add nomNodes gauge
+      def.addDatasource(NUM_NODES_KEY, DsType.GAUGE, collectPeriod * 2, Double.NaN, Double.NaN);
+    }
+
+    // add archives
+
+    // use AVERAGE consolidation,
+    // use NaN when >50% samples are missing
+    def.addArchive(ConsolFun.AVERAGE, 0.5, 1, 240); // 4 hours
+    def.addArchive(ConsolFun.AVERAGE, 0.5, 10, 288); // 48 hours
+    def.addArchive(ConsolFun.AVERAGE, 0.5, 60, 336); // 2 weeks
+    def.addArchive(ConsolFun.AVERAGE, 0.5, 240, 180); // 2 months
+    def.addArchive(ConsolFun.AVERAGE, 0.5, 1440, 365); // 1 year
+    return def;
+  }
+
+  private RrdDb getOrCreateDb(String registry, Group group) {
+    RrdDb db = knownDbs.computeIfAbsent(registry, r -> {
+      RrdDef def = createDef(r, group);
+      try {
+        RrdDb newDb = new RrdDb(def, factory);
+        return newDb;
+      } catch (IOException e) {
+        return null;
+      }
+    });
+    return db;
+  }
+
   @Override
   public void close() {
     log.debug("Closing " + hashCode());
@@ -577,6 +579,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     if (factory != null) {
       factory.close();
     }
+    knownDbs.clear();
   }
 
   public enum Cmd {
@@ -646,7 +649,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
           RrdDb db = new RrdDb(URI_PREFIX + name, true, factory);
           res = new NamedList<>();
           NamedList<Object> data = new NamedList<>();
-          data.add("data", getData(db, dsNames, format, req.getParams()));
+          data.add("data", getDbData(db, dsNames, format, req.getParams()));
           ((NamedList)res).add(name, data);
           db.close();
         }
@@ -663,7 +666,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
           RrdDb db = new RrdDb(URI_PREFIX + name, true, factory);
           NamedList<Object> map = new NamedList<>();
           NamedList<Object> status = new NamedList<>();
-          status.add("status", reportStatus(db));
+          status.add("status", getDbStatus(db));
           map.add(name, status);
           db.close();
           res = map;
@@ -687,7 +690,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     }
   }
 
-  private NamedList<Object> reportStatus(RrdDb db) throws IOException {
+  private NamedList<Object> getDbStatus(RrdDb db) throws IOException {
     NamedList<Object> res = new SimpleOrderedMap<>();
     res.add("lastModified", db.getLastUpdateTime());
     RrdDef def = db.getRrdDef();
@@ -723,7 +726,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     return res;
   }
 
-  private NamedList<Object> getData(RrdDb db, String[] dsNames, Format format, SolrParams params) throws IOException {
+  private NamedList<Object> getDbData(RrdDb db, String[] dsNames, Format format, SolrParams params) throws IOException {
     NamedList<Object> res = new SimpleOrderedMap<>();
     if (dsNames == null || dsNames.length == 0) {
       dsNames = db.getDsNames();

@@ -9,15 +9,14 @@
       "/cluster/metrics/history"
     ],
     "params": {
-      "collection": {
+      "action": {
         "type": "string",
-        "description": "Collection where metrics history is stored, '.system' by default.",
-        "default": ".system"
+        "description": "one of supported actions",
+        "default": "list"
       },
-      "q": {
+      "name": {
         "type": "string",
-        "description": "Arbitrary query to limit the selected metrics.",
-        "default": "*:*"
+        "description": "registry name"
       }
     }
   }

@@ -119,7 +119,7 @@ enum CoreAdminOperation implements CoreAdminOp {
               cd.getShardId(),
               replicaName);
         }
-        historyHandler.getFactory().remove(registry);
+        historyHandler.removeHistory(registry);
       }
     }
 
