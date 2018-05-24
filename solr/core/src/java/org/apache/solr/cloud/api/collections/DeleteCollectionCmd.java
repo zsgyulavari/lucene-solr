@@ -87,6 +87,14 @@ public class DeleteCollectionCmd implements OverseerCollectionMessageHandler.Cmd
           return;
         }
       }
+      // remove collection-level metrics history
+      if (deleteHistory) {
+        MetricsHistoryHandler historyHandler = ocmh.overseer.getCoreContainer().getMetricsHistoryHandler();
+        if (historyHandler != null) {
+          String registry = SolrMetricManager.getRegistryName(SolrInfoBean.Group.collection, collection);
+          historyHandler.removeHistory(registry);
+        }
+      }
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.set(CoreAdminParams.ACTION, CoreAdminParams.CoreAdminAction.UNLOAD.toString());
       params.set(CoreAdminParams.DELETE_INSTANCE_DIR, true);
@@ -131,14 +139,6 @@ public class DeleteCollectionCmd implements OverseerCollectionMessageHandler.Cmd
       if (!removed) {
         throw new SolrException(SolrException.ErrorCode.SERVER_ERROR,
             "Could not fully remove collection: " + collection);
-      }
-      // remove collection-level metrics history
-      if (deleteHistory) {
-        MetricsHistoryHandler historyHandler = ocmh.overseer.getCoreContainer().getMetricsHistoryHandler();
-        if (historyHandler != null) {
-          String registry = SolrMetricManager.getRegistryName(SolrInfoBean.Group.collection, collection);
-          historyHandler.removeHistory(registry);
-        }
       }
     } finally {
 

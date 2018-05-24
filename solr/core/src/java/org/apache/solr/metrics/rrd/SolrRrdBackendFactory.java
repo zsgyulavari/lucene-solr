@@ -41,6 +41,7 @@ import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrCloseable;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.SolrDocumentList;
+import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.params.CollectionAdminParams;
 import org.apache.solr.common.params.CommonParams;
@@ -83,6 +84,7 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
   private final int idPrefixLength;
   private ScheduledThreadPoolExecutor syncService;
   private volatile boolean closed = false;
+  private volatile boolean persistent = true;
 
   private final Map<String, SolrRrdBackend> backends = new ConcurrentHashMap<>();
 
@@ -180,6 +182,9 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
   }
 
   byte[] getData(String path) throws IOException {
+    if (!persistent) {
+      return null;
+    }
     try {
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.add(CommonParams.Q, "{!term f=id}" + ID_PREFIX + ID_SEP + path);
@@ -219,19 +224,21 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
    */
   public List<String> list(int maxLength) throws IOException {
     Set<String> names = new HashSet<>();
-    try {
-      ModifiableSolrParams params = new ModifiableSolrParams();
-      params.add(CommonParams.Q, "*:*");
-      params.add(CommonParams.FQ, CommonParams.TYPE + ":" + DOC_TYPE);
-      params.add(CommonParams.FL, "id");
-      params.add(CommonParams.ROWS, String.valueOf(maxLength));
-      QueryResponse rsp = solrClient.query(collection, params);
-      SolrDocumentList docs = rsp.getResults();
-      if (docs != null) {
-        docs.forEach(d -> names.add(((String)d.getFieldValue("id")).substring(idPrefixLength)));
+    if (persistent) {
+      try {
+        ModifiableSolrParams params = new ModifiableSolrParams();
+        params.add(CommonParams.Q, "*:*");
+        params.add(CommonParams.FQ, CommonParams.TYPE + ":" + DOC_TYPE);
+        params.add(CommonParams.FL, "id");
+        params.add(CommonParams.ROWS, String.valueOf(maxLength));
+        QueryResponse rsp = solrClient.query(collection, params);
+        SolrDocumentList docs = rsp.getResults();
+        if (docs != null) {
+          docs.forEach(d -> names.add(((String)d.getFieldValue("id")).substring(idPrefixLength)));
+        }
+      } catch (SolrServerException e) {
+        log.warn("Error retrieving RRD list", e);
       }
-    } catch (SolrServerException e) {
-      log.warn("Error retrieving RRD list", e);
     }
     // add in-memory backends not yet stored
     names.addAll(backends.keySet());
@@ -250,6 +257,9 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
       it.remove();
       IOUtils.closeQuietly(backend);
     }
+    if (!persistent) {
+      return;
+    }
     // remove all Solr docs
     try {
       solrClient.deleteByQuery(collection,
@@ -265,20 +275,26 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
    * @throws IOException on Solr exception
    */
   public void remove(String path) throws IOException {
-    SolrRrdBackend backend = backends.get(path);
+    SolrRrdBackend backend = backends.remove(path);
     if (backend != null) {
       IOUtils.closeQuietly(backend);
+    }
+    if (!persistent) {
+      return;
     }
     // remove Solr doc
     try {
       solrClient.deleteByQuery(collection, "{!term f=id}" + ID_PREFIX + ID_SEP + path);
-    } catch (SolrServerException e) {
+    } catch (SolrServerException | SolrException e) {
       log.warn("Error deleting RRD for path " + path, e);
     }
   }
 
   synchronized void maybeSyncBackends() {
     if (closed) {
+      return;
+    }
+    if (!persistent) {
       return;
     }
     if (Thread.interrupted()) {
@@ -342,6 +358,9 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     if (backends.containsKey(path)) {
       return true;
     }
+    if (!persistent) {
+      return false;
+    }
     try {
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.add(CommonParams.Q, "{!term f=id}" + ID_PREFIX + ID_SEP + path);
@@ -359,6 +378,14 @@ public class SolrRrdBackendFactory extends RrdBackendFactory implements SolrClos
     } catch (SolrServerException e) {
       throw new IOException(e);
     }
+  }
+
+  public boolean isPersistent() {
+    return persistent;
+  }
+
+  public void setPersistent(boolean persistent) {
+    this.persistent = persistent;
   }
 
   @Override

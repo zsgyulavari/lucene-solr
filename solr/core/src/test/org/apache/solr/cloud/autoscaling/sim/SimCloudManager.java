@@ -206,12 +206,11 @@ public class SimCloudManager implements SolrCloudManager {
             throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "when collection != null only UpdateRequest and QueryRequest are supported: request=" + request + ", collection=" + collection);
           }
         }
-        NamedList<Object> origRsp = super.request(request, collection);
         try {
           SolrResponse rsp = SimCloudManager.this.request(request);
           return rsp.getResponse();
         } catch (UnsupportedOperationException e) {
-          return origRsp;
+          throw new SolrServerException(e);
         }
       }
     };

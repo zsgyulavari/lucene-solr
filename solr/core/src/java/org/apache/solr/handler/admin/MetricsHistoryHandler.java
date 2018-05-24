@@ -213,7 +213,47 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
           timeSource.convertDelay(TimeUnit.SECONDS, collectPeriod, TimeUnit.MILLISECONDS),
           timeSource.convertDelay(TimeUnit.SECONDS, collectPeriod, TimeUnit.MILLISECONDS),
           TimeUnit.MILLISECONDS);
+      checkSystemCollection();
     }
+  }
+
+  public void checkSystemCollection() {
+    // check that .system exists
+    try {
+      if (cloudManager.isClosed() || Thread.interrupted()) {
+        factory.setPersistent(false);
+        return;
+      }
+      ClusterState clusterState = cloudManager.getClusterStateProvider().getClusterState();
+      DocCollection systemColl = clusterState.getCollectionOrNull(CollectionAdminParams.SYSTEM_COLL);
+      if (systemColl == null) {
+        if (logMissingCollection) {
+          log.warn("Missing " + CollectionAdminParams.SYSTEM_COLL + ", keeping metrics history in memory");
+          logMissingCollection = false;
+        }
+        factory.setPersistent(false);
+        return;
+      } else {
+        boolean ready = false;
+        for (Replica r : systemColl.getReplicas()) {
+          if (r.isActive(clusterState.getLiveNodes())) {
+            ready = true;
+            break;
+          }
+        }
+        if (!ready) {
+          log.debug(CollectionAdminParams.SYSTEM_COLL + " not ready yet, keeping metrics history in memory");
+          factory.setPersistent(false);
+          return;
+        }
+      }
+    } catch (Exception e) {
+      log.warn("Error getting cluster state, keeping metrics history in memory", e);
+      factory.setPersistent(false);
+      return;
+    }
+    logMissingCollection = true;
+    factory.setPersistent(true);
   }
 
   public SolrClient getSolrClient() {
@@ -263,37 +303,12 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
 
   private void collectMetrics() {
     log.debug("-- collectMetrics");
-    // check that .system exists
     try {
-      if (cloudManager.isClosed() || Thread.interrupted()) {
-        return;
-      }
-      ClusterState clusterState = cloudManager.getClusterStateProvider().getClusterState();
-      DocCollection systemColl = clusterState.getCollectionOrNull(CollectionAdminParams.SYSTEM_COLL);
-      if (systemColl == null) {
-        if (logMissingCollection) {
-          log.warn("Missing " + CollectionAdminParams.SYSTEM_COLL + ", skipping metrics collection");
-          logMissingCollection = false;
-        }
-        return;
-      } else {
-        boolean ready = false;
-        for (Replica r : systemColl.getReplicas()) {
-          if (r.isActive(clusterState.getLiveNodes())) {
-            ready = true;
-            break;
-          }
-        }
-        if (!ready) {
-          log.debug(CollectionAdminParams.SYSTEM_COLL + " not ready yet...");
-          return;
-        }
-      }
+      checkSystemCollection();
     } catch (Exception e) {
-      log.warn("Error getting cluster state, skipping metrics collection", e);
-      return;
+      log.warn("Error checking for .system collection, keeping metrics history in memory", e);
+      factory.setPersistent(false);
     }
-    logMissingCollection = true;
     // get metrics
     collectLocalReplicaMetrics();
     collectGlobalMetrics();

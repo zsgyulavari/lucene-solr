@@ -48,7 +48,9 @@ public class MockSearchableSolrClient extends SolrClient {
   @Override
   public synchronized NamedList<Object> request(SolrRequest request, String coll) throws SolrServerException, IOException {
     if (coll == null) {
-      coll = request.getParams().get("collection");
+      if (request.getParams() != null) {
+        coll = request.getParams().get("collection");
+      }
     }
     if (coll == null) {
       coll = "";
@@ -66,6 +68,9 @@ public class MockSearchableSolrClient extends SolrClient {
       }
     } else if (request instanceof QueryRequest) {
       SolrParams params = request.getParams();
+      if (params == null) {
+        throw new UnsupportedOperationException("invalid request, no params: " + request);
+      }
       String query = params.get("q");
       final SolrDocumentList lst = new SolrDocumentList();
       if (query != null) {
@@ -99,6 +104,8 @@ public class MockSearchableSolrClient extends SolrClient {
         }
       }
       res.add("response", lst);
+    } else {
+      throw new UnsupportedOperationException("Unsupported request type: " + request.getClass() + ":" + request);
     }
     return res;
   }
