@@ -345,7 +345,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
           for (Iterator<Map.Entry<String, Object>> it = nl.iterator(); it.hasNext(); ) {
             Map.Entry<String, Object> entry = it.next();
             String registry = entry.getKey();
-            if (group != Group.core) { // add nodeName prefix
+            if (group != Group.core) { // add nodeName suffix
               registry = registry + "." + nodeName;
             }
 
@@ -638,7 +638,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     }
     Cmd cmd = Cmd.get(actionStr);
     if (cmd == null) {
-      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "unknown 'action' param '" + actionStr + "', supported actions: " + Cmd.values());
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "unknown 'action' param '" + actionStr + "', supported actions: " + Cmd.actions);
     }
     Object res = null;
     switch (cmd) {
@@ -655,7 +655,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
         String formatStr = req.getParams().get("format", Format.LIST.toString());
         Format format = Format.get(formatStr);
         if (format == null) {
-          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "unknown 'format' param '" + formatStr + "', supported formats: " + Format.values());
+          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "unknown 'format' param '" + formatStr + "', supported formats: " + Format.formats);
         }
         if (!factory.exists(name)) {
           rsp.add("error", "'" + name + "' doesn't exist");
