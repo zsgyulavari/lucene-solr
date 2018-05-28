@@ -40,6 +40,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import com.carrotsearch.randomizedtesting.generators.RandomPicks;
@@ -3317,14 +3318,15 @@ public class TestIndexWriter extends LuceneTestCase {
   }
 
   private static void assertFiles(IndexWriter writer) throws IOException {
+    Predicate<String> filter = file -> file.startsWith("segments") == false && file.equals("write.lock") == false;
     // remove segment files we don't know if we have committed and what is kept around
     Set<String> segFiles = new HashSet<>(writer.segmentInfos.files(true)).stream()
-        .filter(f -> f.startsWith("segments") == false).collect(Collectors.toSet());
+        .filter(filter).collect(Collectors.toSet());
     Set<String> dirFiles = new HashSet<>(Arrays.asList(writer.getDirectory().listAll()))
-        .stream().filter(f -> f.startsWith("segments") == false).collect(Collectors.toSet());
-    Set<String> s = new HashSet<>(segFiles);
-    s.removeAll(dirFiles);
-    assertEquals(segFiles.toString() + " vs "+ dirFiles.toString(), segFiles.size(), dirFiles.size());
+        .stream().filter(filter).collect(Collectors.toSet());
+    // ExtraFS might add an extra0 file, ignore it
+    dirFiles.remove("extra0");
+    assertEquals(segFiles.size(), dirFiles.size());
   }
 
   public void testFullyDeletedSegmentsReleaseFiles() throws IOException {
@@ -3348,6 +3350,30 @@ public class TestIndexWriter extends LuceneTestCase {
     assertFiles(writer);
     assertEquals(1, writer.segmentInfos.asList().size());
     IOUtils.close(writer, dir);
+  }
+
+  public void testSegmentInfoIsSnapshot() throws IOException {
+    Directory dir = newDirectory();
+    IndexWriterConfig config = newIndexWriterConfig();
+    config.setRAMBufferSizeMB(Integer.MAX_VALUE);
+    config.setMaxBufferedDocs(2); // no auto flush
+    IndexWriter writer = new IndexWriter(dir, config);
+    Document d = new Document();
+    d.add(new StringField("id", "doc-0", Field.Store.YES));
+    writer.addDocument(d);
+    d = new Document();
+    d.add(new StringField("id", "doc-1", Field.Store.YES));
+    writer.addDocument(d);
+    DirectoryReader reader = writer.getReader();
+    SegmentCommitInfo segmentInfo = ((SegmentReader) reader.leaves().get(0).reader()).getSegmentInfo();
+    SegmentCommitInfo originalInfo = ((SegmentReader) reader.leaves().get(0).reader()).getOriginalSegmentInfo();
+    assertEquals(0, originalInfo.getDelCount());
+    assertEquals(0, segmentInfo.getDelCount());
+    writer.deleteDocuments(new Term("id", "doc-0"));
+    writer.commit();
+    assertEquals(0, segmentInfo.getDelCount());
+    assertEquals(1, originalInfo.getDelCount());
+    IOUtils.close(reader, writer, dir);
   }
 
 }
