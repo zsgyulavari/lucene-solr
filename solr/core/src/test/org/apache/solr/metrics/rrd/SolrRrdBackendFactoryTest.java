@@ -118,8 +118,8 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
     }
     double[] two = fd.getValues("two");
     assertEquals(Double.NaN, two[100], 0.00001);
-    for (int i = 0; i < 100; i++) {
-      assertEquals(100.0, two[i], 0.00001);
+    for (int i = 1; i < 100; i++) {
+      assertEquals("wrong value at pos " + i, 100.0, two[i], 0.00001);
     }
     db.close();
 
@@ -155,7 +155,7 @@ public class SolrRrdBackendFactoryTest extends SolrTestCaseJ4 {
     }
     two = fd.getValues("two");
     assertEquals(Double.NaN, two[101], 0.00001);
-    for (int i = 0; i < 101; i++) {
+    for (int i = 1; i < 101; i++) {
       assertEquals(100.0, two[i], 0.00001);
     }
 
