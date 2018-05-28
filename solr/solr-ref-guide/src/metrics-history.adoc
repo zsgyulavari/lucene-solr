@@ -403,3 +403,9 @@ image::images/metrics-history/query-graph-10min.png[image]
 
 .Example 60 sec resolution history graph for `UPDATE./update.requests` metric
 image::images/metrics-history/update-graph-60s.png[image]
+
+.Example 60 sec resolution history graph for `memory.heap.used` metric
+image::images/metrics-history/memHeap-60s.png[image]
+
+.Example 60 sec resolution history graph for `os.systemLoadAverage` metric
+image::images/metrics-history/loadAvg-60s.png[image]
