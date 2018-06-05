@@ -19,6 +19,7 @@ package org.apache.solr.handler.admin;
 import javax.imageio.ImageIO;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
@@ -51,11 +52,14 @@ import com.google.common.annotations.VisibleForTesting;
 import org.apache.solr.api.Api;
 import org.apache.solr.api.ApiBag;
 import org.apache.solr.client.solrj.SolrClient;
+import org.apache.solr.client.solrj.SolrQuery;
+import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.cloud.NodeStateProvider;
 import org.apache.solr.client.solrj.cloud.SolrCloudManager;
 import org.apache.solr.client.solrj.cloud.autoscaling.ReplicaInfo;
 import org.apache.solr.client.solrj.cloud.autoscaling.Suggestion;
 import org.apache.solr.client.solrj.cloud.autoscaling.VersionedData;
+import org.apache.solr.client.solrj.impl.HttpClientUtil;
 import org.apache.solr.cloud.Overseer;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.cloud.ClusterState;
@@ -68,9 +72,12 @@ import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.Base64;
+import org.apache.solr.common.util.JavaBinCodec;
 import org.apache.solr.common.util.NamedList;
+import org.apache.solr.common.util.Pair;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.common.util.TimeSource;
+import org.apache.solr.common.util.Utils;
 import org.apache.solr.handler.RequestHandlerBase;
 import org.apache.solr.metrics.SolrMetricManager;
 import org.apache.solr.metrics.rrd.SolrRrdBackendFactory;
@@ -148,6 +155,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
   private final int collectPeriod;
   private final Map<String, List<String>> counters = new HashMap<>();
   private final Map<String, List<String>> gauges = new HashMap<>();
+  private final String overseerUrlScheme;
 
   private final Map<String, RrdDb> knownDbs = new ConcurrentHashMap<>();
 
@@ -166,11 +174,17 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     if (pluginArgs != null) {
       args.putAll(pluginArgs);
     }
-    // override from ZK
-    Map<String, Object> props = (Map<String, Object>)cloudManager.getClusterStateProvider()
-        .getClusterProperty("metrics", Collections.emptyMap())
-        .getOrDefault("history", Collections.emptyMap());
-    args.putAll(props);
+    // override from ZK if available
+    if (cloudManager != null) {
+      Map<String, Object> props = (Map<String, Object>)cloudManager.getClusterStateProvider()
+          .getClusterProperty("metrics", Collections.emptyMap())
+          .getOrDefault("history", Collections.emptyMap());
+      args.putAll(props);
+
+      overseerUrlScheme = cloudManager.getClusterStateProvider().getClusterProperty("urlScheme", "http");
+    } else {
+      overseerUrlScheme = "http";
+    }
 
     this.nodeName = nodeName;
     this.enable = Boolean.parseBoolean(String.valueOf(args.getOrDefault(ENABLE_PROP, "true")));
@@ -180,12 +194,12 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     this.collectPeriod = Integer.parseInt(String.valueOf(args.getOrDefault(COLLECT_PERIOD_PROP, DEFAULT_COLLECT_PERIOD)));
     int syncPeriod = Integer.parseInt(String.valueOf(args.getOrDefault(SYNC_PERIOD_PROP, SolrRrdBackendFactory.DEFAULT_SYNC_PERIOD)));
 
-    factory = new SolrRrdBackendFactory(solrClient, CollectionAdminParams.SYSTEM_COLL,
-            syncPeriod, cloudManager.getTimeSource());
     this.solrClient = solrClient;
     this.metricsHandler = metricsHandler;
     this.cloudManager = cloudManager;
-    this.timeSource = cloudManager.getTimeSource();
+    this.timeSource = cloudManager != null ? cloudManager.getTimeSource() : TimeSource.NANO_TIME;
+    factory = new SolrRrdBackendFactory(solrClient, CollectionAdminParams.SYSTEM_COLL,
+            syncPeriod, this.timeSource);
 
     counters.put(Group.core.toString(), DEFAULT_CORE_COUNTERS);
     counters.put(Group.node.toString(), Collections.emptyList());
@@ -217,43 +231,60 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     }
   }
 
+  // check that .system exists
   public void checkSystemCollection() {
-    // check that .system exists
-    try {
-      if (cloudManager.isClosed() || Thread.interrupted()) {
-        factory.setPersistent(false);
-        return;
-      }
-      ClusterState clusterState = cloudManager.getClusterStateProvider().getClusterState();
-      DocCollection systemColl = clusterState.getCollectionOrNull(CollectionAdminParams.SYSTEM_COLL);
-      if (systemColl == null) {
-        if (logMissingCollection) {
-          log.warn("Missing " + CollectionAdminParams.SYSTEM_COLL + ", keeping metrics history in memory");
-          logMissingCollection = false;
-        }
-        factory.setPersistent(false);
-        return;
-      } else {
-        boolean ready = false;
-        for (Replica r : systemColl.getReplicas()) {
-          if (r.isActive(clusterState.getLiveNodes())) {
-            ready = true;
-            break;
-          }
-        }
-        if (!ready) {
-          log.debug(CollectionAdminParams.SYSTEM_COLL + " not ready yet, keeping metrics history in memory");
+    if (cloudManager != null) {
+      try {
+        if (cloudManager.isClosed() || Thread.interrupted()) {
           factory.setPersistent(false);
           return;
         }
+        ClusterState clusterState = cloudManager.getClusterStateProvider().getClusterState();
+        DocCollection systemColl = clusterState.getCollectionOrNull(CollectionAdminParams.SYSTEM_COLL);
+        if (systemColl == null) {
+          if (logMissingCollection) {
+            log.warn("Missing " + CollectionAdminParams.SYSTEM_COLL + ", keeping metrics history in memory");
+            logMissingCollection = false;
+          }
+          factory.setPersistent(false);
+          return;
+        } else {
+          boolean ready = false;
+          for (Replica r : systemColl.getReplicas()) {
+            if (r.isActive(clusterState.getLiveNodes())) {
+              ready = true;
+              break;
+            }
+          }
+          if (!ready) {
+            log.debug(CollectionAdminParams.SYSTEM_COLL + " not ready yet, keeping metrics history in memory");
+            factory.setPersistent(false);
+            return;
+          }
+        }
+      } catch (Exception e) {
+        if (logMissingCollection) {
+          log.warn("Error getting cluster state, keeping metrics history in memory", e);
+        }
+        logMissingCollection = false;
+        factory.setPersistent(false);
+        return;
       }
-    } catch (Exception e) {
-      log.warn("Error getting cluster state, keeping metrics history in memory", e);
-      factory.setPersistent(false);
-      return;
+      logMissingCollection = true;
+      factory.setPersistent(true);
+    } else {
+      try {
+        solrClient.query(CollectionAdminParams.SYSTEM_COLL, new SolrQuery(CommonParams.Q, "*:*", CommonParams.ROWS, "0"));
+        factory.setPersistent(true);
+        logMissingCollection = true;
+      } catch (Exception e) {
+        if (logMissingCollection) {
+          log.warn("Error querying .system collection, keeping metrics history in memory", e);
+        }
+        logMissingCollection = false;
+        factory.setPersistent(false);
+      }
     }
-    logMissingCollection = true;
-    factory.setPersistent(true);
   }
 
   public SolrClient getSolrClient() {
@@ -271,7 +302,11 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     return factory;
   }
 
-  private boolean isOverseerLeader() {
+  private String getOverseerLeader() {
+    // non-ZK node has no Overseer
+    if (cloudManager == null) {
+      return null;
+    }
     ZkNodeProps props = null;
     try {
       VersionedData data = cloudManager.getDistribStateManager().getData(
@@ -281,24 +316,39 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
       }
     } catch (KeeperException | IOException | NoSuchElementException e) {
       log.warn("Could not obtain overseer's address, skipping.", e);
-      return false;
+      return null;
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      return false;
+      return null;
     }
     if (props == null) {
-      return false;
+      return null;
     }
     String oid = props.getStr(ID);
     if (oid == null) {
-      return false;
+      return null;
     }
     String[] ids = oid.split("-");
     if (ids.length != 3) { // unknown format
       log.warn("Unknown format of leader id, skipping: " + oid);
-      return false;
+      return null;
     }
-    return nodeName.equals(ids[1]);
+    return ids[1];
+  }
+
+  private boolean amIOverseerLeader() {
+    return amIOverseerLeader(null);
+  }
+
+  private boolean amIOverseerLeader(String leader) {
+    if (leader == null) {
+      leader = getOverseerLeader();
+    }
+    if (leader == null) {
+      return false;
+    } else {
+      return nodeName.equals(leader);
+    }
   }
 
   private void collectMetrics() {
@@ -383,7 +433,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
   }
 
   private void collectGlobalMetrics() {
-    if (!isOverseerLeader()) {
+    if (!amIOverseerLeader()) {
       return;
     }
     Set<String> nodes = new HashSet<>(cloudManager.getClusterStateProvider().getLiveNodes());
@@ -640,11 +690,18 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     if (cmd == null) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "unknown 'action' param '" + actionStr + "', supported actions: " + Cmd.actions);
     }
-    Object res = null;
+    final SimpleOrderedMap<Object> res = new SimpleOrderedMap<>();
+    rsp.add("metrics", res);
     switch (cmd) {
       case LIST:
         int rows = req.getParams().getInt(CommonParams.ROWS, SolrRrdBackendFactory.DEFAULT_MAX_DBS);
-        res = factory.list(rows);
+        List<Pair<String, Long>> lst = factory.list(rows);
+        lst.forEach(p -> {
+          SimpleOrderedMap<Object> data = new SimpleOrderedMap<>();
+          data.add("lastModified", p.second());
+          data.add("node", nodeName);
+          res.add(p.first(), data);
+        });
         break;
       case GET:
         String name = req.getParams().get(CommonParams.NAME);
@@ -657,15 +714,14 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
         if (format == null) {
           throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "unknown 'format' param '" + formatStr + "', supported formats: " + Format.formats);
         }
-        if (!factory.exists(name)) {
-          rsp.add("error", "'" + name + "' doesn't exist");
-        } else {
+        if (factory.exists(name)) {
           // get a throwaway copy (safe to close and discard)
           RrdDb db = new RrdDb(URI_PREFIX + name, true, factory);
-          res = new NamedList<>();
-          NamedList<Object> data = new NamedList<>();
+          SimpleOrderedMap<Object> data = new SimpleOrderedMap<>();
           data.add("data", getDbData(db, dsNames, format, req.getParams()));
-          ((NamedList)res).add(name, data);
+          data.add("lastModified", db.getLastUpdateTime());
+          data.add("node", nodeName);
+          res.add(name, data);
           db.close();
         }
         break;
@@ -674,17 +730,14 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
         if (name == null) {
           throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "'name' is a required param");
         }
-        if (!factory.exists(name)) {
-          rsp.add("error", "'" + name + "' doesn't exist");
-        } else {
+        if (factory.exists(name)) {
           // get a throwaway copy (safe to close and discard)
           RrdDb db = new RrdDb(URI_PREFIX + name, true, factory);
-          NamedList<Object> map = new NamedList<>();
-          NamedList<Object> status = new NamedList<>();
+          SimpleOrderedMap<Object> status = new SimpleOrderedMap<>();
           status.add("status", getDbStatus(db));
-          map.add(name, status);
+          status.add("node", nodeName);
+          res.add(name, status);
           db.close();
-          res = map;
         }
         break;
       case DELETE:
@@ -700,9 +753,51 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
         rsp.add("success", "ok");
         break;
     }
-    if (res != null) {
-      rsp.add("metrics", res);
+    // when using in-memory DBs non-overseer node has no access to overseer DBs
+    // forward the request to Overseer leader if available
+    if (!factory.isPersistent()) {
+      String leader = getOverseerLeader();
+      if (leader != null && !amIOverseerLeader(leader)) {
+        // get & merge remote response
+        NamedList<Object> remoteRes = handleRemoteRequest(leader, req);
+        mergeRemoteRes(rsp, remoteRes);
+      }
     }
+    SimpleOrderedMap<Object> apiState = new SimpleOrderedMap<>();
+    apiState.add("enableReplicas", enableReplicas);
+    apiState.add("enableNodes", enableNodes);
+    apiState.add("mode", enable ? (factory.isPersistent() ? "index" : "memory") : "disabled");
+    if (!factory.isPersistent()) {
+      apiState.add("message", "WARNING: metrics history is not being persisted. Create .system collection to start persisting history.");
+    }
+    rsp.add("state", apiState);
+    rsp.getResponseHeader().add("zkConnected", cloudManager != null);
+  }
+
+  private NamedList<Object> handleRemoteRequest(String nodeName, SolrQueryRequest req) {
+    String url = Utils.getBaseUrlForNodeName(nodeName, overseerUrlScheme);
+    ModifiableSolrParams params = new ModifiableSolrParams(req.getParams());
+    params.set(CommonParams.WT, "javabin");
+    url = url + req.getPath() + "?" + params.toString();
+    try {
+      byte[] data = cloudManager.httpRequest(url, SolrRequest.METHOD.GET, null, null, HttpClientUtil.DEFAULT_CONNECT_TIMEOUT, true);
+      // response is always a NamedList
+      try (JavaBinCodec codec = new JavaBinCodec()) {
+        return (NamedList<Object>)codec.unmarshal(new ByteArrayInputStream(data));
+      }
+    } catch (IOException e) {
+      log.warn("Exception forwarding request to Overseer at " + url, e);
+      return null;
+    }
+  }
+
+  private void mergeRemoteRes(SolrQueryResponse rsp, NamedList<Object> remoteRes) {
+    if (remoteRes == null || remoteRes.get("metrics") == null) {
+      return;
+    }
+    NamedList<Object> remoteMetrics = (NamedList<Object>)remoteRes.get("metrics");
+    SimpleOrderedMap localMetrics = (SimpleOrderedMap) rsp.getValues().get("metrics");
+    remoteMetrics.forEach((k, v) -> localMetrics.add(k, v));
   }
 
   private NamedList<Object> getDbStatus(RrdDb db) throws IOException {
@@ -750,7 +845,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     RrdDef def = db.getRrdDef();
     ArcDef[] arcDefs = def.getArcDefs();
     for (ArcDef arcDef : arcDefs) {
-      SimpleOrderedMap map = new SimpleOrderedMap();
+      SimpleOrderedMap<Object> map = new SimpleOrderedMap<>();
       res.add(arcDef.dump(), map);
       Archive a = db.getArchive(arcDef.getConsolFun(), arcDef.getSteps());
       // startTime / endTime, arcStep are in seconds
@@ -776,7 +871,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
           map.add("timestamps", str.toString());
         }
       }
-      SimpleOrderedMap values = new SimpleOrderedMap();
+      SimpleOrderedMap<Object> values = new SimpleOrderedMap<>();
       map.add("values", values);
       for (String name : dsNames) {
         double[] vals = fd.getValues(name);
