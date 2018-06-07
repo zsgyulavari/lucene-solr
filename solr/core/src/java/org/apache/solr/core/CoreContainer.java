@@ -739,6 +739,7 @@ public class CoreContainer {
     status |= LOAD_COMPLETE | INITIAL_CORE_LOAD_COMPLETE;
   }
 
+  // MetricsHistoryHandler supports both cloud and standalone configs
   private void createMetricsHistoryHandler() {
     PluginInfo plugin = cfg.getMetricsConfig().getHistoryHandler();
     Map<String, Object> initArgs;
@@ -762,8 +763,13 @@ public class CoreContainer {
         name = "localhost";
       }
       cloudManager = null;
-      client = new EmbeddedSolrServer(this, CollectionAdminParams.SYSTEM_COLL);
-      // enable local metrics
+      client = new EmbeddedSolrServer(this, CollectionAdminParams.SYSTEM_COLL) {
+        @Override
+        public void close() throws IOException {
+          // do nothing - we close the container ourselves
+        }
+      };
+      // enable local metrics unless specifically set otherwise
       if (!initArgs.containsKey(MetricsHistoryHandler.ENABLE_NODES_PROP)) {
         initArgs.put(MetricsHistoryHandler.ENABLE_NODES_PROP, true);
       }
@@ -820,6 +826,12 @@ public class CoreContainer {
 
     ExecutorUtil.shutdownAndAwaitTermination(coreContainerWorkExecutor);
     replayUpdatesExecutor.shutdownAndAwaitTermination();
+
+    if (metricsHistoryHandler != null) {
+      IOUtils.closeQuietly(metricsHistoryHandler.getSolrClient());
+      metricsHistoryHandler.close();
+    }
+
     if (metricManager != null) {
       metricManager.closeReporters(SolrMetricManager.getRegistryName(SolrInfoBean.Group.node));
       metricManager.closeReporters(SolrMetricManager.getRegistryName(SolrInfoBean.Group.jvm));
@@ -837,10 +849,6 @@ public class CoreContainer {
         zkSys.zkController.removeEphemeralLiveNode();
       } catch (Exception e) {
         log.warn("Error removing live node. Continuing to close CoreContainer", e);
-      }
-      if (metricsHistoryHandler != null) {
-        IOUtils.closeQuietly(metricsHistoryHandler.getSolrClient());
-        metricsHistoryHandler.close();
       }
       if (metricManager != null) {
         metricManager.closeReporters(SolrMetricManager.getRegistryName(SolrInfoBean.Group.cluster));

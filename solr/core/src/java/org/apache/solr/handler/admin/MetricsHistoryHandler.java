@@ -24,6 +24,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -46,6 +48,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.DoubleAdder;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -112,30 +115,32 @@ import static org.apache.solr.common.params.CommonParams.ID;
 public class MetricsHistoryHandler extends RequestHandlerBase implements PermissionNameProvider, Closeable {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-  public static final List<String> DEFAULT_CORE_COUNTERS = new ArrayList<String>() {{
-    add("QUERY./select.requests");
-    add("UPDATE./update.requests");
-  }};
-  public static final List<String> DEFAULT_CORE_GAUGES = new ArrayList<String>() {{
-    add("INDEX.sizeInBytes");
-  }};
-  public static final List<String> DEFAULT_NODE_GAUGES = new ArrayList<String>() {{
-    add("CONTAINER.fs.coreRoot.usableSpace");
-  }};
-  public static final List<String> DEFAULT_JVM_GAUGES = new ArrayList<String>() {{
-    add("memory.heap.used");
-    add("os.processCpuLoad");
-    add("os.systemLoadAverage");
-  }};
+  public static final List<String> DEFAULT_CORE_COUNTERS = new ArrayList<>();
+  public static final List<String> DEFAULT_CORE_GAUGES = new ArrayList<>();
+  public static final List<String> DEFAULT_NODE_GAUGES = new ArrayList<>();
+  public static final List<String> DEFAULT_JVM_GAUGES = new ArrayList<>();
 
   public static final String NUM_SHARDS_KEY = "numShards";
   public static final String NUM_REPLICAS_KEY = "numReplicas";
   public static final String NUM_NODES_KEY = "numNodes";
 
-  public static final List<String> DEFAULT_COLLECTION_GAUGES = new ArrayList<String>() {{
-    add(NUM_SHARDS_KEY);
-    add(NUM_REPLICAS_KEY);
-  }};
+  public static final List<String> DEFAULT_COLLECTION_GAUGES = new ArrayList<>();
+
+  static {
+    DEFAULT_JVM_GAUGES.add("memory.heap.used");
+    DEFAULT_JVM_GAUGES.add("os.processCpuLoad");
+    DEFAULT_JVM_GAUGES.add("os.systemLoadAverage");
+
+    DEFAULT_NODE_GAUGES.add("CONTAINER.fs.coreRoot.usableSpace");
+
+    DEFAULT_CORE_GAUGES.add("INDEX.sizeInBytes");
+
+    DEFAULT_CORE_COUNTERS.add("QUERY./select.requests");
+    DEFAULT_CORE_COUNTERS.add("UPDATE./update.requests");
+
+    DEFAULT_COLLECTION_GAUGES.add(NUM_SHARDS_KEY);
+    DEFAULT_COLLECTION_GAUGES.add(NUM_REPLICAS_KEY);
+  }
 
   public static final String COLLECT_PERIOD_PROP = "collectPeriod";
   public static final String SYNC_PERIOD_PROP = "syncPeriod";
@@ -698,7 +703,8 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
         List<Pair<String, Long>> lst = factory.list(rows);
         lst.forEach(p -> {
           SimpleOrderedMap<Object> data = new SimpleOrderedMap<>();
-          data.add("lastModified", p.second());
+          // RrdDb always uses seconds - convert here for compatibility
+          data.add("lastModified", TimeUnit.SECONDS.convert(p.second(), TimeUnit.MILLISECONDS));
           data.add("node", nodeName);
           res.add(p.first(), data);
         });
@@ -753,7 +759,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
         rsp.add("success", "ok");
         break;
     }
-    // when using in-memory DBs non-overseer node has no access to overseer DBs
+    // when using in-memory DBs non-overseer node has no access to overseer DBs - in this case
     // forward the request to Overseer leader if available
     if (!factory.isPersistent()) {
       String leader = getOverseerLeader();
@@ -766,7 +772,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
     SimpleOrderedMap<Object> apiState = new SimpleOrderedMap<>();
     apiState.add("enableReplicas", enableReplicas);
     apiState.add("enableNodes", enableNodes);
-    apiState.add("mode", enable ? (factory.isPersistent() ? "index" : "memory") : "disabled");
+    apiState.add("mode", enable ? (factory.isPersistent() ? "index" : "memory") : "inactive");
     if (!factory.isPersistent()) {
       apiState.add("message", "WARNING: metrics history is not being persisted. Create .system collection to start persisting history.");
     }
@@ -775,10 +781,20 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
   }
 
   private NamedList<Object> handleRemoteRequest(String nodeName, SolrQueryRequest req) {
-    String url = Utils.getBaseUrlForNodeName(nodeName, overseerUrlScheme);
+    String baseUrl = Utils.getBaseUrlForNodeName(nodeName, overseerUrlScheme);
+    String url;
+    try {
+      URL u = new URL(baseUrl);
+      u = new URL(u.getProtocol(), u.getHost(), u.getPort(), "/api/cluster/metrics/history");
+      url = u.toString();
+    } catch (MalformedURLException e) {
+      log.warn("Invalid Overseer url '" + baseUrl + "', unable to fetch remote metrics history", e);
+      return null;
+    }
+    // always use javabin
     ModifiableSolrParams params = new ModifiableSolrParams(req.getParams());
     params.set(CommonParams.WT, "javabin");
-    url = url + req.getPath() + "?" + params.toString();
+    url = url + "?" + params.toString();
     try {
       byte[] data = cloudManager.httpRequest(url, SolrRequest.METHOD.GET, null, null, HttpClientUtil.DEFAULT_CONNECT_TIMEOUT, true);
       // response is always a NamedList
@@ -856,18 +872,17 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
       if (format != Format.GRAPH) {
         // add timestamps separately from values
         long[] timestamps = fd.getTimestamps();
-        str.setLength(0);
-        for (int i = 0; i < timestamps.length; i++) {
-          if (format == Format.LIST) {
-            map.add("timestamps", timestamps[i]);
-          } else {
+        if (format == Format.LIST) {
+          // Arrays.asList works only on arrays of Objects
+          map.add("timestamps", Arrays.stream(timestamps).boxed().collect(Collectors.toList()));
+        } else {
+          str.setLength(0);
+          for (int i = 0; i < timestamps.length; i++) {
             if (i > 0) {
               str.append('\n');
             }
             str.append(String.valueOf(timestamps[i]));
           }
-        }
-        if (format == Format.STRING) {
           map.add("timestamps", str.toString());
         }
       }
@@ -920,9 +935,7 @@ public class MetricsHistoryHandler extends RequestHandlerBase implements Permiss
             values.add(name, str.toString());
             break;
           case LIST:
-            for (int i = 0; i < vals.length; i++) {
-              values.add(name, vals[i]);
-            }
+            values.add(name, Arrays.stream(vals).boxed().collect(Collectors.toList()));
             break;
         }
       }
