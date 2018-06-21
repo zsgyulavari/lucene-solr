@@ -279,13 +279,12 @@ public class ShardSplitTest extends BasicDistributedZkTest {
       ClusterState state = zkStateReader.getClusterState();
       DocCollection collection = state.getCollection(AbstractDistribZkTestBase.DEFAULT_COLLECTION);
 
+      // should be cleaned up
       Slice shard10 = collection.getSlice(SHARD1_0);
-      assertEquals(Slice.State.CONSTRUCTION, shard10.getState());
-      assertEquals(1, shard10.getReplicas().size());
+      assertNull(shard10);
 
       Slice shard11 = collection.getSlice(SHARD1_1);
-      assertEquals(Slice.State.CONSTRUCTION, shard11.getState());
-      assertEquals(1, shard11.getReplicas().size());
+      assertNull(shard11);
 
       // lets retry the split
       TestInjection.reset(); // let the split succeed
@@ -305,6 +304,51 @@ public class ShardSplitTest extends BasicDistributedZkTest {
   }
 
   @Test
+  public void testSplitAfterFailedSplit2() throws Exception {
+    waitForThingsToLevelOut(15);
+
+    TestInjection.splitFailureAfterReplicaCreation = "true:100"; // we definitely want split to fail
+    try {
+      try {
+        CollectionAdminRequest.SplitShard splitShard = CollectionAdminRequest.splitShard(AbstractDistribZkTestBase.DEFAULT_COLLECTION);
+        splitShard.setShardName(SHARD1);
+        splitShard.process(cloudClient);
+        fail("Shard split was not supposed to succeed after failure injection!");
+      } catch (Exception e) {
+        // expected
+      }
+
+      // assert that sub-shards cores exist and sub-shard is in construction state
+      ZkStateReader zkStateReader = cloudClient.getZkStateReader();
+      zkStateReader.forceUpdateCollection(AbstractDistribZkTestBase.DEFAULT_COLLECTION);
+      ClusterState state = zkStateReader.getClusterState();
+      DocCollection collection = state.getCollection(AbstractDistribZkTestBase.DEFAULT_COLLECTION);
+
+      // should be cleaned up
+      Slice shard10 = collection.getSlice(SHARD1_0);
+      assertNull(shard10);
+
+      Slice shard11 = collection.getSlice(SHARD1_1);
+      assertNull(shard11);
+
+      // lets retry the split
+      TestInjection.reset(); // let the split succeed
+      try {
+        CollectionAdminRequest.SplitShard splitShard = CollectionAdminRequest.splitShard(AbstractDistribZkTestBase.DEFAULT_COLLECTION);
+        splitShard.setShardName(SHARD1);
+        splitShard.process(cloudClient);
+        // Yay!
+      } catch (Exception e) {
+        log.error("Shard split failed", e);
+        fail("Shard split did not succeed after a previous failed split attempt left sub-shards in construction state");
+      }
+
+    } finally {
+      TestInjection.reset();
+    }
+  }
+
+    @Test
   @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028")
   public void testSplitWithChaosMonkey() throws Exception {
     waitForThingsToLevelOut(15);
