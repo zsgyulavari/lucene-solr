@@ -29,8 +29,11 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.solr.client.solrj.cloud.DistributedQueue;
+import org.apache.solr.client.solrj.cloud.NodeStateProvider;
 import org.apache.solr.client.solrj.cloud.autoscaling.PolicyHelper;
 import org.apache.solr.client.solrj.cloud.SolrCloudManager;
+import org.apache.solr.client.solrj.cloud.autoscaling.ReplicaInfo;
+import org.apache.solr.client.solrj.cloud.autoscaling.Suggestion;
 import org.apache.solr.client.solrj.request.CoreAdminRequest;
 import org.apache.solr.cloud.Overseer;
 import org.apache.solr.cloud.overseer.OverseerAction;
@@ -45,6 +48,7 @@ import org.apache.solr.common.cloud.ReplicaPosition;
 import org.apache.solr.common.cloud.Slice;
 import org.apache.solr.common.cloud.ZkNodeProps;
 import org.apache.solr.common.cloud.ZkStateReader;
+import org.apache.solr.common.cloud.rule.ImplicitSnitch;
 import org.apache.solr.common.params.CommonAdminParams;
 import org.apache.solr.common.params.CoreAdminParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
@@ -102,6 +106,8 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
     }
+
+    checkDiskSpace(collectionName, slice.get(), parentShardLeader);
 
     // let's record the ephemeralOwner of the parent leader node
     Stat leaderZnodeStat = zkStateReader.getZkClient().exists(ZkStateReader.LIVE_NODES_ZKNODE + "/" + parentShardLeader.getNodeName(), null, true);
@@ -426,6 +432,43 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
     }
   }
 
+  private void checkDiskSpace(String collection, String shard, Replica parentShardLeader) throws Exception {
+    // check that enough disk space is available on the parent leader node
+    // otherwise the actual index splitting will always fail
+    NodeStateProvider nodeStateProvider = ocmh.cloudManager.getNodeStateProvider();
+    Map<String, Object> nodeValues = nodeStateProvider.getNodeValues(parentShardLeader.getNodeName(),
+        Collections.singletonList(ImplicitSnitch.DISK));
+    Map<String, Map<String, List<ReplicaInfo>>> infos = nodeStateProvider.getReplicaInfo(parentShardLeader.getNodeName(),
+        Collections.singletonList(Suggestion.ConditionType.CORE_IDX.metricsAttribute));
+    if (infos.get(collection) == null || infos.get(collection).get(shard) == null) {
+      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "missing replica information for parent shard leader");
+    }
+    // find the leader
+    List<ReplicaInfo> lst = infos.get(collection).get(shard);
+    Double indexSize = null;
+    for (ReplicaInfo info : lst) {
+      if (info.getCore().equals(parentShardLeader.getCoreName())) {
+        Number size = (Number)info.getVariable(Suggestion.ConditionType.CORE_IDX.metricsAttribute);
+        if (size == null) {
+          throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "missing index size information for parent shard leader");
+        }
+        indexSize = (Double)Suggestion.ConditionType.CORE_IDX.convertVal(size);
+        break;
+      }
+    }
+    if (indexSize == null) {
+      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "missing replica information for parent shard leader");
+    }
+    Number freeSize = (Number)nodeValues.get(ImplicitSnitch.DISK);
+    if (freeSize == null) {
+      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "missing node disk space information for parent shard leader");
+    }
+    if (freeSize.doubleValue() < 2 * indexSize) {
+      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "not enough free disk space to perform index split on node " +
+          parentShardLeader.getNodeName() + ", required: " + (2 * indexSize) + ", available: " + freeSize);
+    }
+  }
+
   private void cleanupAfterFailure(ZkStateReader zkStateReader, String collectionName, String parentShard, List<String> subSlices) throws Exception {
     // get the latest state
     zkStateReader.forceUpdateCollection(collectionName);
@@ -436,7 +479,8 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
       return;
     }
 
-    // set already created sub shards states to INACTIVE
+    // set already created sub shards states to CONSTRUCTION - this prevents them
+    // from entering into RECOVERY or ACTIVE (SOLR-9455)
     DistributedQueue inQueue = Overseer.getStateUpdateQueue(zkStateReader.getZkClient());
     Map<String, Object> propMap = new HashMap<>();
     propMap.put(Overseer.QUEUE_OPERATION, OverseerAction.UPDATESHARDSTATE.toLower());
@@ -445,7 +489,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
       if (!subSlices.contains(s.getName())) {
         continue;
       }
-      propMap.put(s.getName(), Slice.State.INACTIVE.toString());
+      propMap.put(s.getName(), Slice.State.CONSTRUCTION.toString());
     }
 
     // if parent is inactive activate it again
