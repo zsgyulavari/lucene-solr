@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.solr.client.solrj.cloud.DistributedQueue;
@@ -61,6 +62,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import static org.apache.solr.common.cloud.ZkStateReader.COLLECTION_PROP;
+import static org.apache.solr.common.cloud.ZkStateReader.REPLICA_TYPE;
 import static org.apache.solr.common.cloud.ZkStateReader.SHARD_ID_PROP;
 import static org.apache.solr.common.params.CollectionParams.CollectionAction.ADDREPLICA;
 import static org.apache.solr.common.params.CollectionParams.CollectionAction.CREATESHARD;
@@ -120,10 +122,40 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
     List<String> subSlices = new ArrayList<>();
     List<String> subShardNames = new ArrayList<>();
     // TODO: Have replication factor decided in some other way instead of numShards for the parent
-    int repFactor = parentSlice.getReplicas().size();
+
+    // reproduce the currently existing number of replicas per type
+    AtomicInteger numNrt = new AtomicInteger();
+    AtomicInteger numTlog = new AtomicInteger();
+    AtomicInteger numPull = new AtomicInteger();
+    parentSlice.getReplicas().forEach(r -> {
+      switch (r.getType()) {
+        case NRT:
+          numNrt.incrementAndGet();
+          break;
+        case TLOG:
+          numTlog.incrementAndGet();
+          break;
+        case PULL:
+          numPull.incrementAndGet();
+      }
+    });
+    int repFactor = numNrt.get() + numTlog.get() + numPull.get();
+
+    // if we have at least 1 NRT replica then create NRT subreplicas first,
+    // otherwise create TLOG subreplicas first
+    boolean firstNrtReplica;
+    if (numNrt.get() > 0) {
+      firstNrtReplica = true;
+    } else if (numTlog.get() > 0) {
+      firstNrtReplica = false;
+    } else {
+      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "aborting split - no NRT or TLOG replica types in collection " + collectionName +
+          ": nrt=" + numNrt.get() + ", tlog=" + numTlog.get() + ", pull=" + numPull.get());
+    }
+
     List<Map<String, Object>> replicas = new ArrayList<>((repFactor - 1) * 2);
 
-    String rangesStr = fillRanges(ocmh.cloudManager, message, collection, parentSlice, subRanges, subSlices, subShardNames);
+    String rangesStr = fillRanges(ocmh.cloudManager, message, collection, parentSlice, subRanges, subSlices, subShardNames, firstNrtReplica);
 
     try {
 
@@ -277,17 +309,8 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
       log.info("Successfully applied buffered updates on : " + subShardNames);
 
       // Replica creation for the new Slices
+      // replica placement is controlled by the autoscaling policy framework
 
-      // look at the replication factor and see if it matches reality
-      // if it does not, find best nodes to create more cores
-
-      // we need to look at every node and see how many cores it serves
-      // add our new cores to existing nodes serving the least number of cores
-      // but (for now) require that each core goes on a distinct node.
-
-      // TODO: add smarter options that look at the current number of cores per
-      // node?
-      // for now we just go random
       Set<String> nodes = clusterState.getLiveNodes();
       List<String> nodeList = new ArrayList<>(nodes.size());
       nodeList.addAll(nodes);
@@ -299,18 +322,26 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
 
       // TODO: change this to handle sharding a slice into > 2 sub-shards.
 
+      // we have already created one subReplica for each subShard on the parent node.
+      // identify locations for the remaining replicas
+      if (firstNrtReplica) {
+        numNrt.decrementAndGet();
+      } else {
+        numTlog.decrementAndGet();
+      }
+
       List<ReplicaPosition> replicaPositions = Assign.identifyNodes(ocmh.cloudManager,
           clusterState,
           new ArrayList<>(clusterState.getLiveNodes()),
           collectionName,
           new ZkNodeProps(collection.getProperties()),
-          subSlices, repFactor - 1, 0, 0);
+          subSlices, numNrt.get(), numTlog.get(), numPull.get());
       sessionWrapper = PolicyHelper.getLastSessionWrapper(true);
 
       for (ReplicaPosition replicaPosition : replicaPositions) {
         String sliceName = replicaPosition.shard;
         String subShardNodeName = replicaPosition.node;
-        String solrCoreName = collectionName + "_" + sliceName + "_replica" + (replicaPosition.index);
+        String solrCoreName = Assign.buildSolrCoreName(collectionName, sliceName, replicaPosition.type, replicaPosition.index);
 
         log.info("Creating replica shard " + solrCoreName + " as part of slice " + sliceName + " of collection "
             + collectionName + " on " + subShardNodeName);
@@ -319,6 +350,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
             ZkStateReader.COLLECTION_PROP, collectionName,
             ZkStateReader.SHARD_ID_PROP, sliceName,
             ZkStateReader.CORE_NAME_PROP, solrCoreName,
+            ZkStateReader.REPLICA_TYPE, replicaPosition.type.name(),
             ZkStateReader.STATE_PROP, Replica.State.DOWN.toString(),
             ZkStateReader.BASE_URL_PROP, zkStateReader.getBaseUrlForNodeName(subShardNodeName),
             ZkStateReader.NODE_NAME_PROP, subShardNodeName,
@@ -329,6 +361,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
         propMap.put(Overseer.QUEUE_OPERATION, ADDREPLICA.toLower());
         propMap.put(COLLECTION_PROP, collectionName);
         propMap.put(SHARD_ID_PROP, sliceName);
+        propMap.put(REPLICA_TYPE, replicaPosition.type.name());
         propMap.put("node", subShardNodeName);
         propMap.put(CoreAdminParams.NAME, solrCoreName);
         // copy over property params:
@@ -463,7 +496,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
     if (freeSize == null) {
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "missing node disk space information for parent shard leader");
     }
-    if (freeSize.doubleValue() < 2 * indexSize) {
+    if (freeSize.doubleValue() < 2.0 * indexSize) {
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "not enough free disk space to perform index split on node " +
           parentShardLeader.getNodeName() + ", required: " + (2 * indexSize) + ", available: " + freeSize);
     }
@@ -563,7 +596,8 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
   }
 
   public static String fillRanges(SolrCloudManager cloudManager, ZkNodeProps message, DocCollection collection, Slice parentSlice,
-                                List<DocRouter.Range> subRanges, List<String> subSlices, List<String> subShardNames) {
+                                List<DocRouter.Range> subRanges, List<String> subSlices, List<String> subShardNames,
+                                  boolean firstReplicaNrt) {
     String splitKey = message.getStr("split.key");
     DocRouter.Range range = parentSlice.getRange();
     if (range == null) {
@@ -632,7 +666,8 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
     for (int i = 0; i < subRanges.size(); i++) {
       String subSlice = parentSlice.getName() + "_" + i;
       subSlices.add(subSlice);
-      String subShardName = Assign.buildSolrCoreName(cloudManager.getDistribStateManager(), collection, subSlice, Replica.Type.NRT);
+      String subShardName = Assign.buildSolrCoreName(cloudManager.getDistribStateManager(), collection, subSlice,
+          firstReplicaNrt ? Replica.Type.NRT : Replica.Type.TLOG);
       subShardNames.add(subShardName);
     }
     return rangesStr;
