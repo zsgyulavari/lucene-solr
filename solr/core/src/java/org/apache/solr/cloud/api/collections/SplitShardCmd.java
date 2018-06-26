@@ -345,6 +345,10 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
         log.info("Creating replica shard " + solrCoreName + " as part of slice " + sliceName + " of collection "
             + collectionName + " on " + subShardNodeName);
 
+        // we first create all replicas in DOWN state without actually creating their cores in order to
+        // avoid a race condition where Overseer may prematurely activate the new sub-slices (and deactivate
+        // the parent slice) before all new replicas are added. This situation may lead to a loss of performance
+        // because the new shards will be activated with possibly many fewer replicas.
         ZkNodeProps props = new ZkNodeProps(Overseer.QUEUE_OPERATION, ADDREPLICA.toLower(),
             ZkStateReader.COLLECTION_PROP, collectionName,
             ZkStateReader.SHARD_ID_PROP, sliceName,

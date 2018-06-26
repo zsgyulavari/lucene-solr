@@ -43,6 +43,7 @@ collections OtherNodes
 User -> Overseer : SPLITSHARD
 activate Overseer
 == Prepare ==
+Overseer -> Overseer : checkLeaderDiskSpace
 Overseer -> Overseer : fillRanges(N)
 loop 1..N
 Overseer -> Overseer : deleteOldSubShard
