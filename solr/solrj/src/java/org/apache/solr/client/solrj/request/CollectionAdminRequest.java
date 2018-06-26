@@ -17,6 +17,7 @@
 package org.apache.solr.client.solrj.request;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -52,6 +53,12 @@ import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 
 import static org.apache.solr.client.solrj.cloud.autoscaling.Policy.POLICY;
+import static org.apache.solr.common.cloud.DocCollection.RULE;
+import static org.apache.solr.common.cloud.DocCollection.SNITCH;
+import static org.apache.solr.common.cloud.ZkStateReader.AUTO_ADD_REPLICAS;
+import static org.apache.solr.common.cloud.ZkStateReader.MAX_SHARDS_PER_NODE;
+import static org.apache.solr.common.cloud.ZkStateReader.REPLICATION_FACTOR;
+import static org.apache.solr.common.params.CollectionAdminParams.COLL_CONF;
 import static org.apache.solr.common.params.CollectionAdminParams.COUNT_PROP;
 import static org.apache.solr.common.params.CollectionAdminParams.CREATE_NODE_SET_PARAM;
 import static org.apache.solr.common.params.CollectionAdminParams.CREATE_NODE_SET_SHUFFLE_PARAM;
@@ -62,6 +69,18 @@ import static org.apache.solr.common.params.CollectionAdminParams.CREATE_NODE_SE
  * @since solr 4.5
  */
 public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> extends SolrRequest<T> implements V2RequestSupport, MapWriter {
+
+  /**
+   * The set of modifiable collection properties
+   */
+  public static final java.util.List<String> MODIFIABLE_COLLECTION_PROPERTIES = Arrays.asList(
+      RULE,
+      SNITCH,
+      REPLICATION_FACTOR,
+      MAX_SHARDS_PER_NODE,
+      AUTO_ADD_REPLICAS,
+      POLICY,
+      COLL_CONF);
 
   protected final CollectionAction action;
 
@@ -372,6 +391,15 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
    */
   public static Create createCollectionWithImplicitRouter(String collection, String config, String shards, int numNrtReplicas, int numTlogReplicas, int numPullReplicas) {
     return new Create(collection, config, ImplicitDocRouter.NAME, null, checkNotNull("shards",shards), numNrtReplicas, numTlogReplicas, numPullReplicas);
+  }
+
+  /**
+   * Returns a SolrRequest for modifying a collection with the given properties
+   * @param collection  the collection name
+   * @param properties a map of key and values with which the collection is to be modified
+   */
+  public static Modify modifyCollection(String collection, Map<String, Object> properties) {
+    return new Modify(collection, properties);
   }
 
   // CREATE request
@@ -2301,6 +2329,84 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
       return params;
     }
 
+  }
+
+  /**
+   * A Modify Collection request
+   */
+  public static class Modify extends AsyncCollectionSpecificAdminRequest {
+    protected Map<String, Object> attributes;
+
+    private Modify(String collection, Map<String, Object> attributes) {
+      super(CollectionAction.MODIFYCOLLECTION, collection);
+      this.attributes = attributes;
+    }
+
+    /**
+     * Sets the attributes to be modified using the Modify Collection API.
+     * <b>Note: this method will overwrite any previously set attributes</b>
+     *
+     * @param attributes a map of attribute key vs value
+     */
+    public void setAttributes(Map<String, Object> attributes) {
+      this.attributes = attributes;
+    }
+
+    /**
+     * Sets the collection attribute to the given value
+     *
+     * @param key   a string attribute key, must be one of the entries documented
+     *              in the <a href="https://lucene.apache.org/solr/guide/collections-api.html#modifycollection">Modify Collection API documentation</a>
+     * @param value the attribute value for the given key
+     */
+    public Modify setAttribute(String key, Object value) {
+      if (key == null) {
+        throw new IllegalArgumentException("Attribute key cannot be null for the modify collection API");
+      }
+      if (!MODIFIABLE_COLLECTION_PROPERTIES.contains(key)) {
+        throw new IllegalArgumentException("Unknown attribute key: "
+            + key + ". Must be one of: " + MODIFIABLE_COLLECTION_PROPERTIES);
+      }
+      if (value == null) {
+        throw new IllegalArgumentException("Value cannot be null for key: " + key);
+      }
+      if (attributes == null) {
+        attributes = new HashMap<>();
+      }
+      attributes.put(key, value);
+      return this;
+    }
+
+    /**
+     * Removes the given key from the collection
+     *
+     * @param key the string attribute key, must be one of the entries documented
+     *            in the <a href="https://lucene.apache.org/solr/guide/collections-api.html#modifycollection">Modify Collection API documentation</a>
+     */
+    public Modify unsetAttribute(String key) {
+      if (key == null) {
+        throw new IllegalArgumentException("Attribute key cannot be null for the modify collection API");
+      }
+      if (!MODIFIABLE_COLLECTION_PROPERTIES.contains(key)) {
+        throw new IllegalArgumentException("Unknown attribute key: "
+            + key + ". Must be one of: " + MODIFIABLE_COLLECTION_PROPERTIES);
+      }
+      if (attributes == null) {
+        attributes = new HashMap<>();
+      }
+      attributes.put(key, "");
+      return this;
+    }
+
+    @Override
+    public SolrParams getParams() {
+      ModifiableSolrParams params = new ModifiableSolrParams(super.getParams());
+      params.set(CoreAdminParams.COLLECTION, collection);
+      for (Map.Entry<String, Object> entry : attributes.entrySet()) {
+        params.set(entry.getKey(), String.valueOf(entry.getValue()));
+      }
+      return params;
+    }
   }
 
 }
