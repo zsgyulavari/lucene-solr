@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.apache.solr.client.solrj.SolrClient;
@@ -346,6 +347,50 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     } finally {
       TestInjection.reset();
     }
+  }
+
+  @Test
+  public void testSplitMixedReplicaTypes() throws Exception {
+    waitForThingsToLevelOut(15);
+    String collectionName = "testSplitMixedReplicaTypes";
+    CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(collectionName, "conf1", 1, 2, 2, 2);
+    create.setMaxShardsPerNode(5); // some high number so we can create replicas without hindrance
+    create.process(cloudClient);
+    waitForRecoveriesToFinish(collectionName, false);
+
+    CollectionAdminRequest.SplitShard splitShard = CollectionAdminRequest.splitShard(collectionName);
+    splitShard.setShardName(SHARD1);
+    splitShard.process(cloudClient);
+    waitForThingsToLevelOut(15);
+
+    cloudClient.getZkStateReader().forceUpdateCollection(collectionName);
+    ClusterState clusterState = cloudClient.getZkStateReader().getClusterState();
+    DocCollection coll = clusterState.getCollection(collectionName);
+    log.info("coll: " + coll);
+
+    // verify the original shard
+    verifyShard(coll, SHARD1, Slice.State.INACTIVE, 2, 2, 2);
+    // verify new sub-shards
+    verifyShard(coll, SHARD1_0, Slice.State.ACTIVE, 2, 2, 2);
+    verifyShard(coll, SHARD1_1, Slice.State.ACTIVE, 2, 2, 2);
+  }
+
+  private void verifyShard(DocCollection coll, String shard, Slice.State expectedState, int numNrt, int numTlog, int numPull) throws Exception {
+    Slice s = coll.getSlice(shard);
+    assertEquals("unexpected shard state", expectedState, s.getState());
+    AtomicInteger actualNrt = new AtomicInteger();
+    AtomicInteger actualTlog = new AtomicInteger();
+    AtomicInteger actualPull = new AtomicInteger();
+    s.getReplicas().forEach(r -> {
+      switch (r.getType()) {
+        case NRT: actualNrt.incrementAndGet(); break;
+        case TLOG: actualTlog.incrementAndGet(); break;
+        case PULL: actualPull.incrementAndGet(); break;
+      }
+    });
+    assertEquals("actual NRT", numNrt, actualNrt.get());
+    assertEquals("actual TLOG", numTlog, actualTlog.get());
+    assertEquals("actual PULL", numPull, actualPull.get());
   }
 
     @Test

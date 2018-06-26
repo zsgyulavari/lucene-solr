@@ -57,6 +57,7 @@ import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.Utils;
 import org.apache.solr.handler.component.ShardHandler;
 import org.apache.solr.util.TestInjection;
+import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.data.Stat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -107,6 +108,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
       parentShardLeader = zkStateReader.getLeaderRetry(collectionName, slice.get(), 10000);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Interrupted.");
     }
 
     checkDiskSpace(collectionName, slice.get(), parentShardLeader);
@@ -121,7 +123,6 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
     List<DocRouter.Range> subRanges = new ArrayList<>();
     List<String> subSlices = new ArrayList<>();
     List<String> subShardNames = new ArrayList<>();
-    // TODO: Have replication factor decided in some other way instead of numShards for the parent
 
     // reproduce the currently existing number of replicas per type
     AtomicInteger numNrt = new AtomicInteger();
@@ -141,16 +142,13 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
     });
     int repFactor = numNrt.get() + numTlog.get() + numPull.get();
 
-    // if we have at least 1 NRT replica then create NRT subreplicas first,
-    // otherwise create TLOG subreplicas first
-    boolean firstNrtReplica;
-    if (numNrt.get() > 0) {
-      firstNrtReplica = true;
-    } else if (numTlog.get() > 0) {
-      firstNrtReplica = false;
-    } else {
-      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "aborting split - no NRT or TLOG replica types in collection " + collectionName +
-          ": nrt=" + numNrt.get() + ", tlog=" + numTlog.get() + ", pull=" + numPull.get());
+    // type of the first subreplica will be the same as leader
+    boolean firstNrtReplica = parentShardLeader.getType() == Replica.Type.NRT;
+    // verify that we indeed have the right number of correct replica types
+    if ((firstNrtReplica && numNrt.get() < 1) || (!firstNrtReplica && numTlog.get() < 1)) {
+      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "aborting split - inconsistent replica types in collection " + collectionName +
+          ": nrt=" + numNrt.get() + ", tlog=" + numTlog.get() + ", pull=" + numPull.get() + ", shard leader type is " +
+      parentShardLeader.getType());
     }
 
     List<Map<String, Object>> replicas = new ArrayList<>((repFactor - 1) * 2);
@@ -229,6 +227,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
         propMap.put(Overseer.QUEUE_OPERATION, ADDREPLICA.toLower());
         propMap.put(COLLECTION_PROP, collectionName);
         propMap.put(SHARD_ID_PROP, subSlice);
+        propMap.put(REPLICA_TYPE, firstNrtReplica ? Replica.Type.NRT.toString() : Replica.Type.TLOG.toString());
         propMap.put("node", nodeName);
         propMap.put(CoreAdminParams.NAME, subShardName);
         propMap.put(CommonAdminParams.WAIT_FOR_FINAL_STATE, Boolean.toString(waitForFinalState));
@@ -465,7 +464,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
     }
   }
 
-  private void checkDiskSpace(String collection, String shard, Replica parentShardLeader) throws Exception {
+  private void checkDiskSpace(String collection, String shard, Replica parentShardLeader) throws SolrException {
     // check that enough disk space is available on the parent leader node
     // otherwise the actual index splitting will always fail
     NodeStateProvider nodeStateProvider = ocmh.cloudManager.getNodeStateProvider();
@@ -502,9 +501,15 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
     }
   }
 
-  private void cleanupAfterFailure(ZkStateReader zkStateReader, String collectionName, String parentShard, List<String> subSlices) throws Exception {
+  private void cleanupAfterFailure(ZkStateReader zkStateReader, String collectionName, String parentShard, List<String> subSlices) {
+    log.debug("- cleanup after failed split of " + collectionName + "/" + parentShard);
     // get the latest state
-    zkStateReader.forceUpdateCollection(collectionName);
+    try {
+      zkStateReader.forceUpdateCollection(collectionName);
+    } catch (KeeperException | InterruptedException e) {
+      log.warn("Cleanup after failed split of " + collectionName + "/" + parentShard + ": (force update collection)", e);
+      return;
+    }
     ClusterState clusterState = zkStateReader.getClusterState();
     DocCollection coll = clusterState.getCollectionOrNull(collectionName);
 
@@ -536,7 +541,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
       inQueue.offer(Utils.toJSON(m));
     } catch (Exception e) {
       // don't give up yet - just log the error, we may still be able to clean up
-      log.error("Cleanup after failed split: (slice state changes)", e);
+      log.warn("Cleanup after failed split of " + collectionName + "/" + parentShard + ": (slice state changes)", e);
     }
 
     // delete existing subShards
@@ -554,7 +559,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
       try {
         ocmh.commandMap.get(DELETESHARD).call(clusterState, m, new NamedList());
       } catch (Exception e) {
-        log.error("Cleanup after failed split: (deleting existing sub shard " + subSlice + ")", e);
+        log.warn("Cleanup after failed split of " + collectionName + "/" + parentShard + ": (deleting existing sub shard " + subSlice + ")", e);
       }
     }
   }
