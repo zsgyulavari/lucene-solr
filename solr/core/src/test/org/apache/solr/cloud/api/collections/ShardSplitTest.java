@@ -62,7 +62,9 @@ import org.apache.solr.common.cloud.ZkCoreNodeProps;
 import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
+import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.Utils;
+import org.apache.solr.util.LogLevel;
 import org.apache.solr.util.TestInjection;
 import org.junit.Test;
 import org.slf4j.Logger;
@@ -72,6 +74,7 @@ import static org.apache.solr.common.cloud.ZkStateReader.BASE_URL_PROP;
 import static org.apache.solr.common.cloud.ZkStateReader.MAX_SHARDS_PER_NODE;
 import static org.apache.solr.common.cloud.ZkStateReader.REPLICATION_FACTOR;
 
+@LogLevel("org.apache.solr.cloud.api.collections=DEBUG")
 @Slow
 public class ShardSplitTest extends BasicDistributedZkTest {
 
@@ -357,6 +360,11 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     create.setMaxShardsPerNode(5); // some high number so we can create replicas without hindrance
     create.process(cloudClient);
     waitForRecoveriesToFinish(collectionName, false);
+
+    for (int i = 0; i < 100; i++) {
+      cloudClient.add(collectionName, getDoc("id", "id-" + i, "foo_s", "bar " + i));
+    }
+    cloudClient.commit(collectionName);
 
     CollectionAdminRequest.SplitShard splitShard = CollectionAdminRequest.splitShard(collectionName);
     splitShard.setShardName(SHARD1);
@@ -995,6 +1003,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
   protected void splitShard(String collection, String shardId, List<DocRouter.Range> subRanges, String splitKey) throws SolrServerException, IOException {
     ModifiableSolrParams params = new ModifiableSolrParams();
     params.set("action", CollectionParams.CollectionAction.SPLITSHARD.toString());
+    params.set("timing", "true");
     params.set("collection", collection);
     if (shardId != null)  {
       params.set("shard", shardId);
@@ -1019,7 +1028,8 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     baseUrl = baseUrl.substring(0, baseUrl.length() - "collection1".length());
 
     try (HttpSolrClient baseServer = getHttpSolrClient(baseUrl, 30000, 60000 * 5)) {
-      baseServer.request(request);
+      NamedList<Object> rsp = baseServer.request(request);
+      log.info("Shard split response: " + Utils.toJSONString(rsp));
     }
   }
 

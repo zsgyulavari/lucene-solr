@@ -83,7 +83,7 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
       request = lrf.makeRequest("q", "dummy");
 
       SplitIndexCommand command = new SplitIndexCommand(request,
-          Lists.newArrayList(indexDir1.getAbsolutePath(), indexDir2.getAbsolutePath()), null, ranges, new PlainIdRouter(), null, null);
+          Lists.newArrayList(indexDir1.getAbsolutePath(), indexDir2.getAbsolutePath()), null, ranges, new PlainIdRouter(), null, null, false);
       new SolrIndexSplitter(command).split();
 
       Directory directory = h.getCore().getDirectoryFactory().get(indexDir1.getAbsolutePath(),
@@ -128,7 +128,7 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
       request = lrf.makeRequest("q", "dummy");
 
       SplitIndexCommand command = new SplitIndexCommand(request,
-          Lists.newArrayList(indexDir1.getAbsolutePath(), indexDir2.getAbsolutePath()), null, ranges, new PlainIdRouter(), null, null);
+          Lists.newArrayList(indexDir1.getAbsolutePath(), indexDir2.getAbsolutePath()), null, ranges, new PlainIdRouter(), null, null, false);
       new SolrIndexSplitter(command).split();
 
       Directory directory = h.getCore().getDirectoryFactory().get(indexDir1.getAbsolutePath(),
@@ -173,7 +173,7 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
       try {
         request = lrf.makeRequest("q", "dummy");
 
-        SplitIndexCommand command = new SplitIndexCommand(request, null, Lists.newArrayList(core1, core2), ranges, new PlainIdRouter(), null, null);
+        SplitIndexCommand command = new SplitIndexCommand(request, null, Lists.newArrayList(core1, core2), ranges, new PlainIdRouter(), null, null, false);
         new SolrIndexSplitter(command).split();
       } finally {
         if (request != null) request.close();
@@ -210,7 +210,7 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
       request = lrf.makeRequest("q", "dummy");
 
       SplitIndexCommand command = new SplitIndexCommand(request,
-          Lists.newArrayList(indexDir1.getAbsolutePath(), indexDir2.getAbsolutePath(), indexDir3.getAbsolutePath()), null, null, new PlainIdRouter(), null, null);
+          Lists.newArrayList(indexDir1.getAbsolutePath(), indexDir2.getAbsolutePath(), indexDir3.getAbsolutePath()), null, null, new PlainIdRouter(), null, null, false);
       new SolrIndexSplitter(command).split();
 
       directory = h.getCore().getDirectoryFactory().get(indexDir1.getAbsolutePath(),
@@ -275,7 +275,7 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
     try {
       request = lrf.makeRequest("q", "dummy");
       SplitIndexCommand command = new SplitIndexCommand(request,
-          Lists.newArrayList(indexDir.getAbsolutePath()), null, Lists.newArrayList(splitKeyRange), new CompositeIdRouter(), null, splitKey);
+          Lists.newArrayList(indexDir.getAbsolutePath()), null, Lists.newArrayList(splitKeyRange), new CompositeIdRouter(), null, splitKey, false);
       new SolrIndexSplitter(command).split();
       directory = h.getCore().getDirectoryFactory().get(indexDir.getAbsolutePath(),
           DirectoryFactory.DirContext.DEFAULT, h.getCore().getSolrConfig().indexConfig.lockType);

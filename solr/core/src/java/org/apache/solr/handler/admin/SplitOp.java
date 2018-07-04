@@ -132,7 +132,8 @@ class SplitOp implements CoreAdminHandler.CoreAdminOp {
       }
 
 
-      SplitIndexCommand cmd = new SplitIndexCommand(req, paths, newCores, ranges, router, routeFieldName, splitKey);
+      boolean hardLink = req.getParams().getBool("hardLink", true);
+      SplitIndexCommand cmd = new SplitIndexCommand(req, paths, newCores, ranges, router, routeFieldName, splitKey, hardLink);
       core.getUpdateHandler().split(cmd);
 
       if (it.handler.coreContainer.isZooKeeperAware()) {

@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Future;
 
 import org.apache.lucene.index.CodecReader;
 import org.apache.lucene.index.FilterCodecReader;
@@ -31,15 +32,23 @@ import org.apache.lucene.index.SlowCodecReaderWrapper;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.HardlinkCopyDirectoryWrapper;
+import org.apache.lucene.store.LockFactory;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
+import org.apache.solr.common.SolrException;
 import org.apache.solr.common.cloud.CompositeIdRouter;
 import org.apache.solr.common.cloud.DocRouter;
 import org.apache.solr.common.cloud.HashBasedRouter;
+import org.apache.solr.common.util.NamedList;
+import org.apache.solr.core.CachingDirectoryFactory;
+import org.apache.solr.core.DirectoryFactory;
 import org.apache.solr.core.SolrCore;
+import org.apache.solr.handler.IndexFetcher;
 import org.apache.solr.schema.SchemaField;
 import org.apache.solr.search.BitsFilteredPostingsEnum;
 import org.apache.solr.search.SolrIndexSearcher;
@@ -62,6 +71,110 @@ public class SolrIndexSplitter {
   int currPartition = 0;
   String routeFieldName;
   String splitKey;
+  boolean hardLink;
+
+  private static class HardLinkDirectoryFactoryWrapper extends DirectoryFactory {
+
+    private final DirectoryFactory delegate;
+
+    HardLinkDirectoryFactoryWrapper(DirectoryFactory delegate) {
+      this.delegate = delegate;
+    }
+
+    public DirectoryFactory getDelegate() {
+      return delegate;
+    }
+
+    private Directory unwrap(Directory dir) {
+      while (dir instanceof HardlinkCopyDirectoryWrapper) {
+        dir = ((HardlinkCopyDirectoryWrapper)dir).getDelegate();
+      }
+      return dir;
+    }
+
+    @Override
+    public void doneWithDirectory(Directory directory) throws IOException {
+      delegate.doneWithDirectory(unwrap(directory));
+    }
+
+    @Override
+    public void addCloseListener(Directory dir, CachingDirectoryFactory.CloseListener closeListener) {
+      delegate.addCloseListener(unwrap(dir), closeListener);
+    }
+
+    @Override
+    public void close() throws IOException {
+      delegate.close();
+    }
+
+    @Override
+    protected Directory create(String path, LockFactory lockFactory, DirContext dirContext) throws IOException {
+      throw new UnsupportedOperationException("create");
+    }
+
+    @Override
+    protected LockFactory createLockFactory(String rawLockType) throws IOException {
+      throw new UnsupportedOperationException("createLockFactory");
+    }
+
+    @Override
+    public boolean exists(String path) throws IOException {
+      return delegate.exists(path);
+    }
+
+    @Override
+    public void remove(Directory dir) throws IOException {
+      delegate.remove(unwrap(dir));
+    }
+
+    @Override
+    public void remove(Directory dir, boolean afterCoreClose) throws IOException {
+      delegate.remove(unwrap(dir), afterCoreClose);
+    }
+
+    @Override
+    public void remove(String path, boolean afterCoreClose) throws IOException {
+      delegate.remove(path, afterCoreClose);
+    }
+
+    @Override
+    public void remove(String path) throws IOException {
+      delegate.remove(path);
+    }
+
+    private Directory wrap(Directory dir) {
+      if (dir instanceof HardlinkCopyDirectoryWrapper) {
+        return dir;
+      } else {
+        return new HardlinkCopyDirectoryWrapper(dir);
+      }
+    }
+    @Override
+    public Directory get(String path, DirContext dirContext, String rawLockType) throws IOException {
+      Directory dir = delegate.get(path, dirContext, rawLockType);
+      return wrap(dir);
+    }
+
+    @Override
+    public void incRef(Directory directory) {
+      delegate.incRef(unwrap(directory));
+    }
+
+    @Override
+    public boolean isPersistent() {
+      return delegate.isPersistent();
+    }
+
+    @Override
+    public void release(Directory directory) throws IOException {
+      delegate.release(unwrap(directory));
+    }
+
+    @Override
+    public void init(NamedList args) {
+      delegate.init(args);
+    }
+  }
 
   public SolrIndexSplitter(SplitIndexCommand cmd) {
     searcher = cmd.getReq().getSearcher();
@@ -86,6 +199,7 @@ public class SolrIndexSplitter {
     if (cmd.splitKey != null) {
       splitKey = getRouteKey(cmd.splitKey);
     }
+    this.hardLink = cmd.hardLink;
   }
 
   public void split() throws IOException {
@@ -113,16 +227,24 @@ public class SolrIndexSplitter {
       boolean success = false;
 
       RefCounted<IndexWriter> iwRef = null;
-      IndexWriter iw = null;
-      if (cores != null) {
+      IndexWriter iw;
+      if (cores != null && !hardLink) {
         SolrCore subCore = cores.get(partitionNumber);
         iwRef = subCore.getUpdateHandler().getSolrCoreState().getIndexWriter(subCore);
         iw = iwRef.get();
       } else {
         SolrCore core = searcher.getCore();
-        String path = paths.get(partitionNumber);
+        String path;
+        DirectoryFactory factory;
+        if (hardLink && cores != null) {
+          path =  cores.get(partitionNumber).getDataDir() + "index.split";
+          factory = new HardLinkDirectoryFactoryWrapper(core.getDirectoryFactory());
+        } else {
+          factory = core.getDirectoryFactory();
+          path = paths.get(partitionNumber);
+        }
         iw = SolrIndexWriter.create(core, "SplittingIndexWriter"+partitionNumber + (ranges != null ? " " + ranges.get(partitionNumber) : ""), path,
-                                    core.getDirectoryFactory(), true, core.getLatestSchema(),
+                                    factory, true, core.getLatestSchema(),
                                     core.getSolrConfig().indexConfig, core.getDeletionPolicy(), core.getCodec());
       }
 
@@ -151,9 +273,88 @@ public class SolrIndexSplitter {
           }
         }
       }
-
     }
+    // all sub-indexes created ok
+    // when using hard-linking switch directories & refresh cores
+    if (hardLink && cores != null) {
+      boolean switchOk = true;
+      for (int partitionNumber = 0; partitionNumber < numPieces; partitionNumber++) {
+        SolrCore subCore = cores.get(partitionNumber);
+        String indexDirPath = subCore.getIndexDir();
 
+        log.debug("Switching directories");
+        String hardLinkPath = subCore.getDataDir() + "index.split";
+        subCore.modifyIndexProps("index.split");
+        try {
+          subCore.getUpdateHandler().newIndexWriter(false);
+          openNewSearcher(subCore);
+        } catch (Exception e) {
+          log.error("Failed to switch sub-core " + indexDirPath + " to " + hardLinkPath + ", split will fail.", e);
+          switchOk = false;
+          break;
+        }
+      }
+      if (!switchOk) {
+        // rollback the switch
+        for (int partitionNumber = 0; partitionNumber < numPieces; partitionNumber++) {
+          SolrCore subCore = cores.get(partitionNumber);
+          Directory dir = null;
+          try {
+            dir = subCore.getDirectoryFactory().get(subCore.getDataDir(), DirectoryFactory.DirContext.META_DATA,
+                subCore.getSolrConfig().indexConfig.lockType);
+            dir.deleteFile(IndexFetcher.INDEX_PROPERTIES);
+          } finally {
+            if (dir != null) {
+              subCore.getDirectoryFactory().release(dir);
+            }
+          }
+          // switch back if necessary and remove the hardlinked dir
+          String hardLinkPath = subCore.getDataDir() + "index.split";
+          try {
+            dir = subCore.getDirectoryFactory().get(hardLinkPath, DirectoryFactory.DirContext.DEFAULT,
+                subCore.getSolrConfig().indexConfig.lockType);
+            subCore.getDirectoryFactory().doneWithDirectory(dir);
+            subCore.getDirectoryFactory().remove(dir);
+          } finally {
+            if (dir != null) {
+              subCore.getDirectoryFactory().release(dir);
+            }
+          }
+          subCore.getUpdateHandler().newIndexWriter(false);
+          try {
+            openNewSearcher(subCore);
+          } catch (Exception e) {
+            log.warn("Error rolling back failed split of " + hardLinkPath, e);
+          }
+        }
+        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "There were errors during index split");
+      } else {
+        // complete the switch remove original index
+        for (int partitionNumber = 0; partitionNumber < numPieces; partitionNumber++) {
+          SolrCore subCore = cores.get(partitionNumber);
+          String oldIndexPath = subCore.getDataDir() + "index";
+          Directory indexDir = null;
+          try {
+            indexDir = subCore.getDirectoryFactory().get(oldIndexPath,
+                DirectoryFactory.DirContext.DEFAULT, subCore.getSolrConfig().indexConfig.lockType);
+            subCore.getDirectoryFactory().doneWithDirectory(indexDir);
+            subCore.getDirectoryFactory().remove(indexDir);
+          } finally {
+            if (indexDir != null) {
+              subCore.getDirectoryFactory().release(indexDir);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private void openNewSearcher(SolrCore core) throws Exception {
+    Future[] waitSearcher = new Future[1];
+    core.getSearcher(true, false, waitSearcher, true);
+    if (waitSearcher[0] != null) {
+      waitSearcher[0].get();
+    }
   }
 
   FixedBitSet[] split(LeafReaderContext readerContext) throws IOException {
