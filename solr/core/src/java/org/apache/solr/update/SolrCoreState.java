@@ -21,6 +21,7 @@ import java.lang.invoke.MethodHandles;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
 
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.search.Sort;
@@ -179,6 +180,8 @@ public abstract class SolrCoreState {
   }
 
   public abstract Lock getRecoveryLock();
+
+  public abstract ReadWriteLock getIndexWriterLock();
 
   // These are needed to properly synchronize the bootstrapping when the
   // in the target DC require a full sync.

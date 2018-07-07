@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -422,6 +423,11 @@ public final class DefaultSolrCoreState extends SolrCoreState implements Recover
   @Override
   public Lock getRecoveryLock() {
     return recoveryLock;
+  }
+
+  @Override
+  public ReadWriteLock getIndexWriterLock() {
+    return iwLock;
   }
 
   @Override

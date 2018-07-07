@@ -36,10 +36,10 @@ public class SplitIndexCommand extends UpdateCommand {
   public DocRouter router;
   public String routeFieldName;
   public String splitKey;
-  public boolean hardLink;
+  public boolean offline;
 
   public SplitIndexCommand(SolrQueryRequest req, List<String> paths, List<SolrCore> cores, List<DocRouter.Range> ranges,
-                           DocRouter router, String routeFieldName, String splitKey, boolean hardLink) {
+                           DocRouter router, String routeFieldName, String splitKey, boolean offline) {
     super(req);
     this.paths = paths;
     this.cores = cores;
@@ -47,7 +47,7 @@ public class SplitIndexCommand extends UpdateCommand {
     this.router = router;
     this.routeFieldName = routeFieldName;
     this.splitKey = splitKey;
-    this.hardLink = hardLink;
+    this.offline = offline;
   }
 
   @Override
@@ -68,7 +68,7 @@ public class SplitIndexCommand extends UpdateCommand {
     if (splitKey != null) {
       sb.append(",split.key=" + splitKey);
     }
-    sb.append(",hardLink=" + hardLink);
+    sb.append(",offline=" + offline);
     sb.append('}');
     return sb.toString();
   }

@@ -22,7 +22,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.locks.ReadWriteLock;
 
+import org.apache.lucene.store.Directory;
 import org.apache.solr.cloud.CloudDescriptor;
 import org.apache.solr.cloud.ZkShardTerms;
 import org.apache.solr.common.SolrException;
@@ -31,6 +33,7 @@ import org.apache.solr.common.cloud.DocCollection;
 import org.apache.solr.common.cloud.DocRouter;
 import org.apache.solr.common.cloud.Slice;
 import org.apache.solr.common.params.CoreAdminParams;
+import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.request.LocalSolrQueryRequest;
@@ -78,9 +81,10 @@ class SplitOp implements CoreAdminHandler.CoreAdminOp {
     }
 
     log.info("Invoked split action for core: " + cname);
-    SolrCore core = it.handler.coreContainer.getCore(cname);
-    SolrQueryRequest req = new LocalSolrQueryRequest(core, params);
+    boolean offline = params.getBool("offline", true);
+    SolrCore parentCore = it.handler.coreContainer.getCore(cname);
     List<SolrCore> newCores = null;
+    SolrQueryRequest req = null;
 
     try {
       // TODO: allow use of rangesStr in the future
@@ -91,9 +95,9 @@ class SplitOp implements CoreAdminHandler.CoreAdminOp {
       String routeFieldName = null;
       if (it.handler.coreContainer.isZooKeeperAware()) {
         ClusterState clusterState = it.handler.coreContainer.getZkController().getClusterState();
-        String collectionName = req.getCore().getCoreDescriptor().getCloudDescriptor().getCollectionName();
+        String collectionName = parentCore.getCoreDescriptor().getCloudDescriptor().getCollectionName();
         DocCollection collection = clusterState.getCollection(collectionName);
-        String sliceName = req.getCore().getCoreDescriptor().getCloudDescriptor().getShardId();
+        String sliceName = parentCore.getCoreDescriptor().getCloudDescriptor().getShardId();
         Slice slice = collection.getSlice(sliceName);
         router = collection.getRouter() != null ? collection.getRouter() : DocRouter.DEFAULT;
         if (ranges == null) {
@@ -131,10 +135,20 @@ class SplitOp implements CoreAdminHandler.CoreAdminOp {
         paths = Arrays.asList(pathsArr);
       }
 
+      req = new LocalSolrQueryRequest(parentCore, params);
 
-      boolean hardLink = req.getParams().getBool("hardLink", true);
-      SplitIndexCommand cmd = new SplitIndexCommand(req, paths, newCores, ranges, router, routeFieldName, splitKey, hardLink);
-      core.getUpdateHandler().split(cmd);
+      ReadWriteLock iwLock = parentCore.getSolrCoreState().getIndexWriterLock();
+      SplitIndexCommand cmd = new SplitIndexCommand(req, paths, newCores, ranges, router, routeFieldName, splitKey, offline);
+      if (offline) {
+        iwLock.writeLock().lockInterruptibly();
+      }
+      try {
+        parentCore.getUpdateHandler().split(cmd);
+      } finally {
+        if (offline) {
+          iwLock.writeLock().unlock();
+        }
+      }
 
       if (it.handler.coreContainer.isZooKeeperAware()) {
         for (SolrCore newcore : newCores) {
@@ -151,7 +165,7 @@ class SplitOp implements CoreAdminHandler.CoreAdminOp {
       throw e;
     } finally {
       if (req != null) req.close();
-      if (core != null) core.close();
+      if (parentCore != null) parentCore.close();
       if (newCores != null) {
         for (SolrCore newCore : newCores) {
           newCore.close();
