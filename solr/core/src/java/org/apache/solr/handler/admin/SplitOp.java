@@ -137,18 +137,8 @@ class SplitOp implements CoreAdminHandler.CoreAdminOp {
 
       req = new LocalSolrQueryRequest(parentCore, params);
 
-      ReadWriteLock iwLock = parentCore.getSolrCoreState().getIndexWriterLock();
-      SplitIndexCommand cmd = new SplitIndexCommand(req, paths, newCores, ranges, router, routeFieldName, splitKey, offline);
-      if (offline) {
-        iwLock.writeLock().lockInterruptibly();
-      }
-      try {
-        parentCore.getUpdateHandler().split(cmd);
-      } finally {
-        if (offline) {
-          iwLock.writeLock().unlock();
-        }
-      }
+      SplitIndexCommand cmd = new SplitIndexCommand(req, it.rsp, paths, newCores, ranges, router, routeFieldName, splitKey, offline);
+      parentCore.getUpdateHandler().split(cmd);
 
       if (it.handler.coreContainer.isZooKeeperAware()) {
         for (SolrCore newcore : newCores) {

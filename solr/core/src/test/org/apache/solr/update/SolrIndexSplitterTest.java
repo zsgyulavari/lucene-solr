@@ -35,9 +35,11 @@ import org.apache.solr.common.cloud.CompositeIdRouter;
 import org.apache.solr.common.cloud.DocRouter;
 import org.apache.solr.common.cloud.PlainIdRouter;
 import org.apache.solr.common.util.Hash;
+import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.DirectoryFactory;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.request.LocalSolrQueryRequest;
+import org.apache.solr.response.SolrQueryResponse;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -52,6 +54,8 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
   @BeforeClass
   public static void beforeClass() throws Exception {
     System.setProperty("enable.update.log", "false"); // schema12 doesn't support _version_
+    System.setProperty("solr.directoryFactory", "solr.NRTCachingDirectoryFactory");
+    System.setProperty("solr.tests.lockType", DirectoryFactory.LOCK_TYPE_SIMPLE);
     initCore("solrconfig.xml", "schema12.xml");
   }
 
@@ -91,8 +95,8 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
       List<DocRouter.Range> ranges = getRanges(id1, id2);
 
       request = lrf.makeRequest("q", "dummy");
-
-      SplitIndexCommand command = new SplitIndexCommand(request,
+      SolrQueryResponse rsp = new SolrQueryResponse();
+      SplitIndexCommand command = new SplitIndexCommand(request, rsp,
           Lists.newArrayList(indexDir1.getAbsolutePath(), indexDir2.getAbsolutePath()), null, ranges, new PlainIdRouter(), null, null, offline);
       doSplit(command);
 
@@ -118,19 +122,9 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
   }
 
   private void doSplit(SplitIndexCommand command) throws Exception {
-    if (command.offline) {
-      ReadWriteLock lock = command.req.getCore().getSolrCoreState().getIndexWriterLock();
-      lock.writeLock().lockInterruptibly();
-    }
-    try {
-      new SolrIndexSplitter(command).split();
-    } finally {
-      if (command.offline) {
-        ReadWriteLock lock = command.req.getCore().getSolrCoreState().getIndexWriterLock();
-        lock.writeLock().unlock();
-      }
-    }
-
+    NamedList<Object> results = new NamedList<>();
+    new SolrIndexSplitter(command).split(results);
+    command.rsp.addResponse(results);
   }
   
   // SOLR-5144
@@ -160,8 +154,9 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
       List<DocRouter.Range> ranges = getRanges(id1, id2);
 
       request = lrf.makeRequest("q", "dummy");
+      SolrQueryResponse rsp = new SolrQueryResponse();
 
-      SplitIndexCommand command = new SplitIndexCommand(request,
+      SplitIndexCommand command = new SplitIndexCommand(request, rsp,
           Lists.newArrayList(indexDir1.getAbsolutePath(), indexDir2.getAbsolutePath()), null, ranges, new PlainIdRouter(), null, null, offline);
       doSplit(command);
 
@@ -220,8 +215,8 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
       LocalSolrQueryRequest request = null;
       try {
         request = lrf.makeRequest("q", "dummy");
-
-        SplitIndexCommand command = new SplitIndexCommand(request, null, Lists.newArrayList(core1, core2), ranges, new PlainIdRouter(), null, null, offline);
+        SolrQueryResponse rsp = new SolrQueryResponse();
+        SplitIndexCommand command = new SplitIndexCommand(request, rsp, null, Lists.newArrayList(core1, core2), ranges, new PlainIdRouter(), null, null, offline);
         doSplit(command);
       } finally {
         if (request != null) request.close();
@@ -265,8 +260,8 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
       assertU(commit());
 
       request = lrf.makeRequest("q", "dummy");
-
-      SplitIndexCommand command = new SplitIndexCommand(request,
+      SolrQueryResponse rsp = new SolrQueryResponse();
+      SplitIndexCommand command = new SplitIndexCommand(request, rsp,
           Lists.newArrayList(indexDir1.getAbsolutePath(), indexDir2.getAbsolutePath(), indexDir3.getAbsolutePath()), null, null, new PlainIdRouter(), null, null, offline);
       doSplit(command);
 
@@ -340,7 +335,8 @@ public class SolrIndexSplitterTest extends SolrTestCaseJ4 {
     Directory directory = null;
     try {
       request = lrf.makeRequest("q", "dummy");
-      SplitIndexCommand command = new SplitIndexCommand(request,
+      SolrQueryResponse rsp = new SolrQueryResponse();
+      SplitIndexCommand command = new SplitIndexCommand(request, rsp,
           Lists.newArrayList(indexDir.getAbsolutePath()), null, Lists.newArrayList(splitKeyRange), new CompositeIdRouter(), null, splitKey, offline);
       doSplit(command);
       directory = h.getCore().getDirectoryFactory().get(indexDir.getAbsolutePath(),

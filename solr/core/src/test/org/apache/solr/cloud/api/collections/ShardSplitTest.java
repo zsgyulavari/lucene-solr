@@ -389,7 +389,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     CollectionAdminRequest.SplitShard splitShard = CollectionAdminRequest.splitShard(collectionName);
     splitShard.setShardName(SHARD1);
     splitShard.setOffline(offline);
-    splitShard.process(cloudClient);
+    CollectionAdminResponse rsp = splitShard.process(cloudClient);
     waitForThingsToLevelOut(15);
 
     cloudClient.getZkStateReader().forceUpdateCollection(collectionName);

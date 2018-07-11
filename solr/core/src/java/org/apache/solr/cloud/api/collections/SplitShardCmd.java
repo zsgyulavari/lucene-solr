@@ -322,7 +322,6 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
 
       ocmh.processResponses(results, shardHandler, true, "SPLITSHARD failed to invoke SPLIT core admin command", asyncId,
           requestMap);
-
       t.stop();
 
       log.debug("Index on shard: " + nodeName + " split into two successfully");
@@ -501,6 +500,31 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
 
       log.info("Successfully created all replica shards for all sub-slices " + subSlices);
 
+      if (offline) {
+        // re-activate all previously deactivated slices except for the parent
+        DistributedQueue inQueue = Overseer.getStateUpdateQueue(zkStateReader.getZkClient());
+        final Map<String, Object> propMap = new HashMap<>();
+        boolean sendUpdateState = false;
+        propMap.put(Overseer.QUEUE_OPERATION, OverseerAction.UPDATESHARDSTATE.toLower());
+        propMap.put(ZkStateReader.COLLECTION_PROP, collectionName);
+
+        for (String sliceName : offlineSlices) {
+          if (sliceName.equals(slice.get())) {
+            continue;
+          }
+          propMap.put(sliceName, Slice.State.ACTIVE.toString());
+          sendUpdateState = true;
+        }
+
+        if (sendUpdateState) {
+          try {
+            ZkNodeProps m = new ZkNodeProps(propMap);
+            inQueue.offer(Utils.toJSON(m));
+          } catch (Exception e) {
+            throw new Exception("Could not re-activate offline slices", e);
+          }
+        }
+      }
       t = timings.sub("finalCommit");
       ocmh.commit(results, slice.get(), parentShardLeader);
       t.stop();
@@ -619,7 +643,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
       if (s == null) {
         continue;
       }
-      log.info("- sub-shard: {} already exists therefore requesting its deletion", subSlice);
+      log.debug("- sub-shard: {} exists therefore requesting its deletion", subSlice);
       HashMap<String, Object> props = new HashMap<>();
       props.put(Overseer.QUEUE_OPERATION, "deleteshard");
       props.put(COLLECTION_PROP, collectionName);

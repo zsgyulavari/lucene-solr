@@ -19,6 +19,7 @@ package org.apache.solr.update;
 import org.apache.solr.common.cloud.DocRouter;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.request.SolrQueryRequest;
+import org.apache.solr.response.SolrQueryResponse;
 
 import java.util.List;
 
@@ -29,7 +30,7 @@ import java.util.List;
  *
  */
 public class SplitIndexCommand extends UpdateCommand {
-  // public List<Directory> dirs;
+  public SolrQueryResponse rsp;
   public List<String> paths;
   public List<SolrCore> cores;  // either paths or cores should be specified
   public List<DocRouter.Range> ranges;
@@ -38,9 +39,10 @@ public class SplitIndexCommand extends UpdateCommand {
   public String splitKey;
   public boolean offline;
 
-  public SplitIndexCommand(SolrQueryRequest req, List<String> paths, List<SolrCore> cores, List<DocRouter.Range> ranges,
+  public SplitIndexCommand(SolrQueryRequest req, SolrQueryResponse rsp, List<String> paths, List<SolrCore> cores, List<DocRouter.Range> ranges,
                            DocRouter router, String routeFieldName, String splitKey, boolean offline) {
     super(req);
+    this.rsp = rsp;
     this.paths = paths;
     this.cores = cores;
     this.ranges = ranges;
