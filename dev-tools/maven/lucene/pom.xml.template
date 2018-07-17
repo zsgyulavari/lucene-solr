@@ -53,6 +53,7 @@
     <module>grouping</module>
     <module>highlighter</module>
     <module>join</module>
+    <module>luke</module>
     <module>memory</module>
     <module>misc</module>
     <module>queries</module>

@@ -23,8 +23,6 @@
     Luke - Lucene Toolbox
   </description>
 
-  <property name="demo.name" value="lucene-luke-${version}"/>
-
   <import file="../module-build.xml"/>
 
   <target name="init" depends="module-build.init,jar-lucene-core"/>
