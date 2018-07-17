@@ -34,6 +34,7 @@ public enum LicenseType {
   //SUNBCLA("Sun Binary Code License Agreement"),
   SUN("Sun Open Source License", false),
   COMPOUND("Compound license (see NOTICE).", true),
+  WTFPL("Do What the Fuck You Want to Public License", false),
   FAKE("FAKE license - not needed", false);
 
   private String display;

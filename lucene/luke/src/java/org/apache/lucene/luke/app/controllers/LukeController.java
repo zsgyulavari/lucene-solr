@@ -37,12 +37,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 
 import static org.apache.lucene.luke.app.util.ExceptionHandler.runnableWrapper;
 
 public class LukeController implements IndexObserver, DirectoryObserver {
 
-  private static final Logger logger = LoggerFactory.getLogger(LukeController.class);
+  private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   @FXML
   private AnchorPane primary;

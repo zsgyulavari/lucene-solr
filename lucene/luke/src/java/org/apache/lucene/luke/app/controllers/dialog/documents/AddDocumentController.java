@@ -78,6 +78,7 @@ import org.apache.lucene.util.BytesRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Constructor;
 import java.util.Arrays;
 import java.util.List;
@@ -88,7 +89,7 @@ import static org.apache.lucene.luke.app.util.ExceptionHandler.runnableWrapper;
 
 public class AddDocumentController implements DialogWindowController {
 
-  private static Logger logger = LoggerFactory.getLogger(AddDocumentController.class);
+  private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private final IndexHandler indexHandler;
 

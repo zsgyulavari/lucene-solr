@@ -17,13 +17,9 @@
 
 package org.apache.lucene.luke.models.documents;
 
-import com.google.common.annotations.VisibleForTesting;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.PostingsEnum;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;

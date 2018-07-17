@@ -53,6 +53,7 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.text.NumberFormat;
 import java.util.Arrays;
 import java.util.Collection;
@@ -92,7 +93,7 @@ public final class SearchImpl extends LukeModel implements Search {
    * @param reader - the index reader
    */
   SearchImpl(@Nonnull IndexReader reader) {
-    this(reader, LoggerFactory.getLogger(SearchImpl.class));
+    this(reader, LoggerFactory.getLogger(MethodHandles.lookup().lookupClass()));
   }
 
   @VisibleForTesting

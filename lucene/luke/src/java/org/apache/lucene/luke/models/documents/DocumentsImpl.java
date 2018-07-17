@@ -36,6 +36,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -60,7 +61,7 @@ public final class DocumentsImpl extends LukeModel implements Documents {
    * @param reader - the index reader
    */
   DocumentsImpl(@Nonnull IndexReader reader) {
-    this(reader, LoggerFactory.getLogger(DocumentsImpl.class));
+    this(reader, LoggerFactory.getLogger(MethodHandles.lookup().lookupClass()));
   }
 
   @VisibleForTesting

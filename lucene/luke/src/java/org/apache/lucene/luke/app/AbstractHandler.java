@@ -20,12 +20,13 @@ package org.apache.lucene.luke.app;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.List;
 
 public abstract class AbstractHandler<T extends Observer> {
 
-  private static final Logger logger = LoggerFactory.getLogger(AbstractHandler.class);
+  private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private List<T> observers = new ArrayList<>();
 

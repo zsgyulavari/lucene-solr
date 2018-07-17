@@ -41,6 +41,7 @@ import javax.annotation.Nullable;
 import javax.inject.Inject;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.lang.invoke.MethodHandles;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -48,7 +49,7 @@ import static org.apache.lucene.luke.app.util.ExceptionHandler.runnableWrapper;
 
 public class CheckIndexController implements DialogWindowController {
 
-  private static Logger logger = LoggerFactory.getLogger(CheckIndexController.class);
+  private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private final IndexHandler indexHandler;
 

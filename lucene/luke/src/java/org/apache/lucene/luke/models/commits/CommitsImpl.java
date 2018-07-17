@@ -32,6 +32,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -55,7 +56,7 @@ public final class CommitsImpl extends LukeModel implements Commits {
    * @param indexPath - the path to index directory
    */
   CommitsImpl(Directory dir, String indexPath) {
-    this(dir, indexPath, LoggerFactory.getLogger(CommitsImpl.class));
+    this(dir, indexPath, LoggerFactory.getLogger(MethodHandles.lookup().lookupClass()));
   }
 
   /**
@@ -65,7 +66,7 @@ public final class CommitsImpl extends LukeModel implements Commits {
    * @param indexPath - the path to index directory
    */
   CommitsImpl(DirectoryReader reader, String indexPath) {
-    this(reader.directory(), indexPath, LoggerFactory.getLogger(CommitsImpl.class));
+    this(reader.directory(), indexPath, LoggerFactory.getLogger(MethodHandles.lookup().lookupClass()));
   }
 
   @VisibleForTesting
