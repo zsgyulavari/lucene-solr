@@ -23,6 +23,8 @@
     Luke - Lucene Toolbox
   </description>
 
+  <property name="forbidden.jdk.internal.portable.signature" value="jdk-internal"/> <!-- allow javafx.* classes -->
+
   <import file="../module-build.xml"/>
 
   <target name="init" depends="module-build.init,jar-lucene-core"/>

@@ -2460,12 +2460,13 @@ ${ant.project.name}.test.dependencies=${test.classpath.list}
   <target name="check-forbidden-apis" depends="-check-forbidden-all,-check-forbidden-core,-check-forbidden-tests" description="Check forbidden API calls in compiled class files"/>
   
   <!-- applies to both source and test code -->
+  <property name="forbidden.jdk.internal.portable.signature" value="jdk-non-portable"/> <!-- default may be relaxed via 'jdk-internal', e.g. to allow javafx.* classes -->
   <target name="-check-forbidden-all" depends="-init-forbidden-apis,compile-core,compile-test">
     <forbidden-apis suppressAnnotation="**.SuppressForbidden" classpathref="forbidden-apis.allclasses.classpath" targetVersion="${javac.release}">
       <signatures>
         <bundled name="jdk-unsafe"/>
         <bundled name="jdk-deprecated"/>
-        <bundled name="jdk-non-portable"/>
+        <bundled name="${forbidden.jdk.internal.portable.signature}"/>
         <bundled name="jdk-reflection"/>
         <fileset dir="${common.dir}/tools/forbiddenApis">
           <include name="base.txt"/>
