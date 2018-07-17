@@ -102,7 +102,7 @@ public class ResourceLoaderTest extends SolrTestCaseJ4 {
     //noinspection unchecked
     invalid = new Object[] {
         new NGramFilterFactory(map("minGramSize", "1", "maxGramSize", "2")),
-        "hello",  12.3f ,
+        "hello",   12.3f ,
         new KeywordTokenizerFactory(new HashMap<>())
     };
     for( Object obj : invalid ) {
