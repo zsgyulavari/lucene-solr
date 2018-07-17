@@ -341,7 +341,7 @@
       <patterns><pattern testClass=".*\.Test[^.]*|.*\.[^.]*Test" /></patterns>
     </configuration>
 
-    <list size="42">
+    <list size="43">
       <item index="0" class="java.lang.String" itemvalue="JUnit.Lucene core" />
       <item index="1" class="java.lang.String" itemvalue="JUnit.Module analyzers-common" />
       <item index="2" class="java.lang.String" itemvalue="JUnit.Module analyzers-icu" />
@@ -360,30 +360,30 @@
       <item index="16" class="java.lang.String" itemvalue="JUnit.Module grouping" />
       <item index="17" class="java.lang.String" itemvalue="JUnit.Module highlighter" />
       <item index="18" class="java.lang.String" itemvalue="JUnit.Module join" />
-      <item index="19" class="java.lang.String" itemvalue="JUnit.Module memory" />
-      <item index="20" class="java.lang.String" itemvalue="JUnit.Module misc" />
-      <item index="21" class="java.lang.String" itemvalue="JUnit.Module queries" />
-      <item index="22" class="java.lang.String" itemvalue="JUnit.Module queryparser" />
-      <item index="23" class="java.lang.String" itemvalue="JUnit.Module replicator" />
-      <item index="24" class="java.lang.String" itemvalue="JUnit.Module sandbox" />
-      <item index="25" class="java.lang.String" itemvalue="JUnit.Module spatial" />
-      <item index="26" class="java.lang.String" itemvalue="JUnit.Module spatial-extras" />
-      <item index="27" class="java.lang.String" itemvalue="JUnit.Module spatial3d" />
-      <item index="28" class="java.lang.String" itemvalue="JUnit.Module suggest" />
-      <item index="29" class="java.lang.String" itemvalue="Application.solrcloud" />
-      <item index="30" class="java.lang.String" itemvalue="JUnit.Solr core" />
-      <item index="31" class="java.lang.String" itemvalue="JUnit.Solrj" />
-      <item index="32" class="java.lang.String" itemvalue="JUnit.Solr analysis-extras contrib" />
-      <item index="33" class="java.lang.String" itemvalue="JUnit.Solr analytics contrib" />
-      <item index="34" class="java.lang.String" itemvalue="JUnit.Solr clustering contrib" />
-      <item index="35" class="java.lang.String" itemvalue="JUnit.Solr dataimporthandler contrib" />
-      <item index="36" class="java.lang.String" itemvalue="JUnit.Solr dataimporthandler-extras contrib" />
-      <item index="37" class="java.lang.String" itemvalue="JUnit.Solr extraction contrib" />
-      <item index="38" class="java.lang.String" itemvalue="JUnit.Solr langid contrib" />
-      <item index="39" class="java.lang.String" itemvalue="JUnit.Solr ltr contrib" />
-      <item index="40" class="java.lang.String" itemvalue="JUnit.Solr prometheus-exporter contrib" />
+      <item index="19" class="java.lang.String" itemvalue="JUnit.Module luke" />
+      <item index="20" class="java.lang.String" itemvalue="JUnit.Module memory" />
+      <item index="21" class="java.lang.String" itemvalue="JUnit.Module misc" />
+      <item index="22" class="java.lang.String" itemvalue="JUnit.Module queries" />
+      <item index="23" class="java.lang.String" itemvalue="JUnit.Module queryparser" />
+      <item index="24" class="java.lang.String" itemvalue="JUnit.Module replicator" />
+      <item index="25" class="java.lang.String" itemvalue="JUnit.Module sandbox" />
+      <item index="26" class="java.lang.String" itemvalue="JUnit.Module spatial" />
+      <item index="27" class="java.lang.String" itemvalue="JUnit.Module spatial-extras" />
+      <item index="28" class="java.lang.String" itemvalue="JUnit.Module spatial3d" />
+      <item index="29" class="java.lang.String" itemvalue="JUnit.Module suggest" />
+      <item index="30" class="java.lang.String" itemvalue="Application.solrcloud" />
+      <item index="31" class="java.lang.String" itemvalue="JUnit.Solr core" />
+      <item index="32" class="java.lang.String" itemvalue="JUnit.Solrj" />
+      <item index="33" class="java.lang.String" itemvalue="JUnit.Solr analysis-extras contrib" />
+      <item index="34" class="java.lang.String" itemvalue="JUnit.Solr analytics contrib" />
+      <item index="35" class="java.lang.String" itemvalue="JUnit.Solr clustering contrib" />
+      <item index="36" class="java.lang.String" itemvalue="JUnit.Solr dataimporthandler contrib" />
+      <item index="37" class="java.lang.String" itemvalue="JUnit.Solr dataimporthandler-extras contrib" />
+      <item index="38" class="java.lang.String" itemvalue="JUnit.Solr extraction contrib" />
+      <item index="39" class="java.lang.String" itemvalue="JUnit.Solr langid contrib" />
+      <item index="40" class="java.lang.String" itemvalue="JUnit.Solr ltr contrib" />
+      <item index="41" class="java.lang.String" itemvalue="JUnit.Solr prometheus-exporter contrib" />
       <item index="42" class="java.lang.String" itemvalue="JUnit.Solr velocity contrib" />
-      <item index="43" class="java.lang.String" itemvalue="JUnit.Module luke" />
     </list>
   </component>
 </project>

@@ -716,7 +716,7 @@
   </target>
 
   <property name="luke.jar" value="${common.dir}/build/luke/lucene-luke-${version}.jar"/>
-  <target name="check-luke-uptodate" unless="suggest.uptodate">
+  <target name="check-luke-uptodate" unless="luke.uptodate">
     <module-uptodate name="luke" jarfile="${luke.jar}" property="luke.uptodate"/>
   </target>
   <target name="jar-luke" unless="luke.uptodate" depends="check-luke-uptodate">
@@ -725,5 +725,4 @@
     </ant>
     <property name="luke.uptodate" value="true"/>
   </target>
-
 </project>
