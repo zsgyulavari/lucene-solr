@@ -17,6 +17,8 @@
 
 package org.apache.solr.client.solrj.cloud.autoscaling;
 
+import java.lang.invoke.MethodHandles;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
@@ -26,14 +28,67 @@ import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.util.Pair;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import static org.apache.solr.common.params.CollectionParams.CollectionAction.ADDREPLICA;
 
 class AddReplicaSuggester extends Suggester {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   SolrRequest init() {
+    Set<String> collections = (Set<String>) hints.getOrDefault(Hint.COLL, Collections.emptySet());
+    Set<Pair<String, String>> s = (Set<Pair<String, String>>) hints.getOrDefault(Hint.COLL_SHARD, Collections.emptySet());
+
+    String withCollection = findWithCollection(collections, s);
+    //if withCollection is present, try to allocate replicas to nodes which already have the withCollection replicas and
+    // that do not have  any violations
+    Collection originalTargetNodesCopy = setupWithCollectionTargetNodes(collections, s, withCollection);
+
+    log.debug("Generating suggestions with hints: {}", hints);
+
     SolrRequest operation = tryEachNode(true);
-    if (operation == null) operation = tryEachNode(false);
+    if (operation == null && withCollection != null)  {
+      // it was not possible to place the replica in nodes which already have that withCollection.
+      //try to place the replica in any node. This may add replica of withCollection to that node (if not present)
+      // restore original target nodes and try again
+      if (originalTargetNodesCopy != null)  {
+        hints.put(Hint.TARGET_NODE, originalTargetNodesCopy);
+      } else  {
+        hints.remove(Hint.TARGET_NODE);
+      }
+
+      operation = tryEachNode(true);
+      //we still can't get a valid node
+      if (operation == null)  {
+        for (Row row : getMatrix()) {
+          row.forEachReplica(r -> {
+            if(withCollection.equals(r.getCollection()))
+              hint(Hint.TARGET_NODE, row.node);
+          });
+        }
+    /*    getMatrix().stream()
+            .filter(row -> row.collectionVsShardVsReplicas.containsKey(withCollection))
+            .forEach(row -> hint(Hint.TARGET_NODE, row.node));*/
+
+        // previously, we tried to allocate replicas without ignoring the non strict rules
+        // (but they have the withCollection replicas)
+        //now we are going to try by ignoring the no strict rules
+        operation = tryEachNode(false);
+        if (operation == null)  {
+          // we still can't get a node where we can place a replica
+          // restore original target nodes and try again
+          if (originalTargetNodesCopy != null)  {
+            hints.put(Hint.TARGET_NODE, originalTargetNodesCopy);
+          } else  {
+            hints.remove(Hint.TARGET_NODE);
+          }
+          operation = tryEachNode(false);
+        }
+      }
+    } else if (operation == null) {
+      operation = tryEachNode(false);
+    }
     return operation;
   }
 
@@ -44,7 +99,7 @@ class AddReplicaSuggester extends Suggester {
     }
     for (Pair<String, String> shard : shards) {
       Replica.Type type = Replica.Type.get((String) hints.get(Hint.REPLICATYPE));
-      //iterate through  nodes and identify the least loaded
+      // iterate through nodes and identify the least loaded
       List<Violation> leastSeriousViolation = null;
       Row bestNode = null;
       for (int i = getMatrix().size() - 1; i >= 0; i--) {

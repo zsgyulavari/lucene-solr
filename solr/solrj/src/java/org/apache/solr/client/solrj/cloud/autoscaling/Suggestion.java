@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -37,12 +38,14 @@ import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.V2RequestSupport;
 import org.apache.solr.client.solrj.cloud.autoscaling.Clause.ComputedType;
 import org.apache.solr.client.solrj.cloud.autoscaling.Violation.ReplicaInfoAndErr;
+import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.cloud.rule.ImplicitSnitch;
 import org.apache.solr.common.util.Pair;
 import org.apache.solr.common.util.StrUtils;
 
 import static java.util.Collections.emptySet;
 import static java.util.Collections.unmodifiableSet;
+import static org.apache.solr.client.solrj.cloud.autoscaling.Clause.parseString;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Policy.ANY;
 import static org.apache.solr.common.params.CollectionParams.CollectionAction.MOVEREPLICA;
 
@@ -337,7 +340,7 @@ public class Suggestion {
 
       //When a replica is added, freedisk should be incremented
       @Override
-      public void projectAddReplica(Cell cell, ReplicaInfo ri) {
+      public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> ops) {
         //go through other replicas of this shard and copy the index size value into this
         for (Row row : cell.getRow().session.matrix) {
           row.forEachReplica(replicaInfo -> {
@@ -357,7 +360,7 @@ public class Suggestion {
       }
 
       @Override
-      public void projectRemoveReplica(Cell cell, ReplicaInfo ri) {
+      public void projectRemoveReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector) {
         Double idxSize = (Double) validate(CORE_IDX.tagName, ri.getVariable(CORE_IDX.tagName), false);
         if (idxSize == null) return;
         Double currFreeDisk = cell.val == null ? 0.0d : (Double) cell.val;
@@ -426,12 +429,12 @@ public class Suggestion {
       }
 
       @Override
-      public void projectAddReplica(Cell cell, ReplicaInfo ri) {
+      public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> ops) {
         cell.val = cell.val == null ? 0 : ((Number) cell.val).longValue() + 1;
       }
 
       @Override
-      public void projectRemoveReplica(Cell cell, ReplicaInfo ri) {
+      public void projectRemoveReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector) {
         cell.val = cell.val == null ? 0 : ((Number) cell.val).longValue() - 1;
       }
     },
@@ -484,7 +487,12 @@ public class Suggestion {
     LAZY() {
       @Override
       public Object validate(String name, Object val, boolean isRuleVal) {
-        return Clause.parseString(val);
+        return parseString(val);
+      }
+
+      @Override
+      boolean match(Object inputVal, Operand op, Object val, String name, Row row) {
+        return op.match(parseString(val), parseString(inputVal)) == Clause.TestStatus.PASS;
       }
 
       @Override
@@ -500,6 +508,56 @@ public class Suggestion {
       @Override
       public void getSuggestions(SuggestionCtx ctx) {
         perNodeSuggestions(ctx);
+      }
+
+
+    },
+
+    @Meta(name = "withCollection", type = String.class)
+    WITH_COLLECTION() {
+      @Override
+      boolean match(Object inputVal, Operand op, Object val, String name, Row row) {
+        Map<String, String> withCollectionMap = (Map<String, String>) inputVal;
+        if (withCollectionMap == null || withCollectionMap.isEmpty()) return true;
+
+        Set<String> uniqueColls = new HashSet<>();
+        row.forEachReplica(replicaInfo -> uniqueColls.add(replicaInfo.getCollection()));
+
+        for (Map.Entry<String, String> e : withCollectionMap.entrySet()) {
+          if (uniqueColls.contains(e.getKey()) && !uniqueColls.contains(e.getValue())) return false;
+        }
+
+        return true;
+      }
+
+      @Override
+      public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector) {
+        Map<String, String> withCollectionMap = (Map<String, String>) cell.val;
+        if (withCollectionMap == null || withCollectionMap.isEmpty()) return;
+
+        Set<String> uniqueColls = new HashSet<>();
+        Row row = cell.row;
+        row.forEachReplica(replicaInfo -> uniqueColls.add(replicaInfo.getCollection()));
+
+        for (Map.Entry<String, String> e : withCollectionMap.entrySet()) {
+          if (uniqueColls.contains(e.getKey()) && !uniqueColls.contains(e.getValue()))  {
+            String withCollection = e.getValue();
+
+            opCollector.accept(new Row.OperationInfo(withCollection, "shard1", row.node, cell.name, true, Replica.Type.NRT));
+          }
+        }
+      }
+
+      @Override
+      public void projectRemoveReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector) {
+        // todo nocommit
+        super.projectRemoveReplica(cell, ri, opCollector);
+      }
+
+      @Override
+      public int compareViolation(Violation v1, Violation v2) {
+        // todo nocommit
+        return super.compareViolation(v1, v2);
       }
     };
 
@@ -627,10 +685,10 @@ public class Suggestion {
     /**
      * Simulate a replica addition to a node in the cluster
      */
-    public void projectAddReplica(Cell cell, ReplicaInfo ri) {
+    public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector) {
     }
 
-    public void projectRemoveReplica(Cell cell, ReplicaInfo ri) {
+    public void projectRemoveReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector) {
     }
 
     public int compareViolation(Violation v1, Violation v2) {
@@ -641,6 +699,11 @@ public class Suggestion {
 
     public Object computeValue(Policy.Session session, Clause.Condition condition, String collection, String shard, String node) {
       return condition.val;
+    }
+
+    boolean match(Object inputVal, Operand op, Object val, String name, Row row) {
+      return op.match(val, validate(name, inputVal, false)) == Clause.TestStatus.PASS;
+
     }
   }
 

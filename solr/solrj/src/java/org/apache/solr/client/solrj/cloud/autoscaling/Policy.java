@@ -55,6 +55,8 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.stream.Collectors.collectingAndThen;
 import static java.util.stream.Collectors.toList;
+import static org.apache.solr.client.solrj.cloud.autoscaling.Suggestion.ConditionType.NODE;
+import static org.apache.solr.client.solrj.cloud.autoscaling.Suggestion.ConditionType.WITH_COLLECTION;
 
 /*The class that reads, parses and applies policies specified in
  * autoscaling.json
@@ -131,9 +133,12 @@ public class Policy implements MapWriter {
 
     this.policies = Collections.unmodifiableMap(
         policiesFromMap((Map<String, List<Map<String, Object>>>) jsonMap.getOrDefault(POLICIES, emptyMap()), newParams));
-    this.params = Collections.unmodifiableList(newParams.stream()
+    List<Pair<String, Suggestion.ConditionType>> params = newParams.stream()
         .map(s -> new Pair<>(s, Suggestion.getTagType(s)))
-        .collect(toList()));
+        .collect(toList());
+    //let this be there always, there is no extra cost
+    params.add(new Pair<>(WITH_COLLECTION.tagName, WITH_COLLECTION));
+    this.params = Collections.unmodifiableList(params);
     perReplicaAttributes = readPerReplicaAttrs();
   }
 
@@ -500,6 +505,21 @@ public class Policy implements MapWriter {
       expandedClauses = clusterPolicy.stream()
           .filter(clause -> !clause.isPerCollectiontag())
           .collect(Collectors.toList());
+
+      if (nodes.size() > 0) {
+        //if any collection has 'withCollection' irrespective of the node, the NodeStateProvider returns a map value
+        Map<String, Object> vals = nodeStateProvider.getNodeValues(nodes.get(0), Collections.singleton("withCollection"));
+        if (!vals.isEmpty() && vals.get("withCollection") != null) {
+          Map<String, String> withCollMap = (Map<String, String>) vals.get("withCollection");
+          if (!withCollMap.isEmpty()) {
+            Clause withCollClause = new Clause((Map<String,Object>)Utils.fromJSONString("{withCollection:'*' , node: '#ANY'}") ,
+                new Clause.Condition(NODE.tagName, "#ANY", Operand.EQUAL, null, null),
+                new Clause.Condition(WITH_COLLECTION.tagName,"*" , Operand.EQUAL, null, null), true
+            );
+            expandedClauses.add(withCollClause);
+          }
+        }
+      }
 
       ClusterStateProvider stateProvider = cloudManager.getClusterStateProvider();
       for (String c : collections) {

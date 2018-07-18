@@ -37,7 +37,6 @@ import org.apache.solr.common.util.StrUtils;
 import org.apache.solr.common.util.Utils;
 
 import static java.util.Collections.singletonMap;
-import static org.apache.solr.client.solrj.cloud.autoscaling.Clause.TestStatus.PASS;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Operand.GREATER_THAN;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Operand.LESS_THAN;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Operand.NOT_EQUAL;
@@ -69,6 +68,17 @@ public class Clause implements MapWriter, Comparable<Clause> {
     this.globalTag = evaluateValue(clause.globalTag, computedValueEvaluator);
     this.hasComputedValue = clause.hasComputedValue;
     this.strict = clause.strict;
+  }
+
+  // internal use only
+  Clause(Map<String, Object> original, Condition tag, Condition globalTag, boolean isStrict)  {
+    this.original = original;
+    this.tag = tag;
+    this.globalTag = globalTag;
+    this.globalTag.clause = this;
+    this.type = null;
+    this.hasComputedValue = false;
+    this.strict = isStrict;
   }
 
   private Clause(Map<String, Object> m) {
@@ -487,21 +497,21 @@ public class Clause implements MapWriter, Comparable<Clause> {
     }
 
     boolean isPass(Object inputVal) {
+      return isPass(inputVal, null);
+    }
+
+    boolean isPass(Object inputVal, Row row) {
       if (computedType != null) {
         throw new IllegalStateException("This is supposed to be called only from a Condition with no computed value or a SealedCondition");
 
       }
       if (inputVal instanceof ReplicaCount) inputVal = ((ReplicaCount) inputVal).getVal(getClause().type);
-      if (varType == ConditionType.LAZY) { // we don't know the type
-        return op.match(parseString(val), parseString(inputVal)) == PASS;
-      } else {
-        return op.match(val, validate(name, inputVal, false)) == PASS;
-      }
+      return varType.match(inputVal, op, val, name, row);
     }
 
 
     boolean isPass(Row row) {
-      return isPass(row.getVal(name));
+      return isPass(row.getVal(name), row);
     }
 
     @Override
