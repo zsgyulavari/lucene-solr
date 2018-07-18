@@ -270,10 +270,8 @@ public class BlockGroupingCollector extends SimpleCollector {
    *    within each group
    *  @param maxDocsPerGroup How many top documents to keep
    *     within each group.
-   *  @param fillSortFields If true then the Comparable
-   *     values for the sort fields will be set
    */
-  public TopGroups<?> getTopGroups(Sort withinGroupSort, int groupOffset, int withinGroupOffset, int maxDocsPerGroup, boolean fillSortFields) throws IOException {
+  public TopGroups<?> getTopGroups(Sort withinGroupSort, int groupOffset, int withinGroupOffset, int maxDocsPerGroup) throws IOException {
 
     //if (queueFull) {
     //System.out.println("getTopGroups groupOffset=" + groupOffset + " topNGroups=" + topNGroups);
@@ -306,9 +304,10 @@ public class BlockGroupingCollector extends SimpleCollector {
         collector = TopScoreDocCollector.create(maxDocsPerGroup);
       } else {
         // Sort by fields
-        collector = TopFieldCollector.create(withinGroupSort, maxDocsPerGroup, fillSortFields, needsScores, needsScores, true); // TODO: disable exact counts?
+        collector = TopFieldCollector.create(withinGroupSort, maxDocsPerGroup, needsScores, true); // TODO: disable exact counts?
       }
 
+      float groupMaxScore = needsScores ? Float.NEGATIVE_INFINITY : Float.NaN;
       LeafCollector leafCollector = collector.getLeafCollector(og.readerContext);
       leafCollector.setScorer(fakeScorer);
       for(int docIDX=0;docIDX<og.count;docIDX++) {
@@ -316,6 +315,7 @@ public class BlockGroupingCollector extends SimpleCollector {
         fakeScorer.doc = doc;
         if (needsScores) {
           fakeScorer.score = og.scores[docIDX];
+          groupMaxScore = Math.max(groupMaxScore, fakeScorer.score);
         }
         leafCollector.collect(doc);
       }
@@ -323,13 +323,9 @@ public class BlockGroupingCollector extends SimpleCollector {
 
       final Object[] groupSortValues;
 
-      if (fillSortFields) {
-        groupSortValues = new Comparable<?>[comparators.length];
-        for(int sortFieldIDX=0;sortFieldIDX<comparators.length;sortFieldIDX++) {
-          groupSortValues[sortFieldIDX] = comparators[sortFieldIDX].value(og.comparatorSlot);
-        }
-      } else {
-        groupSortValues = null;
+      groupSortValues = new Comparable<?>[comparators.length];
+      for(int sortFieldIDX=0;sortFieldIDX<comparators.length;sortFieldIDX++) {
+        groupSortValues[sortFieldIDX] = comparators[sortFieldIDX].value(og.comparatorSlot);
       }
 
       final TopDocs topDocs = collector.topDocs(withinGroupOffset, maxDocsPerGroup);
@@ -337,12 +333,12 @@ public class BlockGroupingCollector extends SimpleCollector {
       // TODO: we could aggregate scores across children
       // by Sum/Avg instead of passing NaN:
       groups[downTo] = new GroupDocs<>(Float.NaN,
-                                             topDocs.getMaxScore(),
+                                             groupMaxScore,
                                              og.count,
                                              topDocs.scoreDocs,
                                              null,
                                              groupSortValues);
-      maxScore = Math.max(maxScore, topDocs.getMaxScore());
+      maxScore = Math.max(maxScore, groupMaxScore);
     }
 
     /*

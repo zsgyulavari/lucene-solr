@@ -136,11 +136,9 @@ public class TestTopFieldCollectorEarlyTermination extends LuceneTestCase {
         } else {
           after = null;
         }
-        final boolean fillFields = random().nextBoolean();
         final boolean trackDocScores = random().nextBoolean();
-        final boolean trackMaxScore = random().nextBoolean();
-        final TopFieldCollector collector1 = TopFieldCollector.create(sort, numHits, after, fillFields, trackDocScores, trackMaxScore, true);
-        final TopFieldCollector collector2 = TopFieldCollector.create(sort, numHits, after, fillFields, trackDocScores, trackMaxScore, false);
+        final TopFieldCollector collector1 = TopFieldCollector.create(sort, numHits, after, trackDocScores, true);
+        final TopFieldCollector collector2 = TopFieldCollector.create(sort, numHits, after, trackDocScores, false);
 
         final Query query;
         if (random().nextBoolean()) {
@@ -154,7 +152,7 @@ public class TestTopFieldCollectorEarlyTermination extends LuceneTestCase {
         TopDocs td2 = collector2.topDocs();
 
         assertFalse(collector1.isEarlyTerminated());
-        if (trackMaxScore == false && paging == false && maxSegmentSize > numHits && query instanceof MatchAllDocsQuery) {
+        if (paging == false && maxSegmentSize > numHits && query instanceof MatchAllDocsQuery) {
           // Make sure that we sometimes early terminate
           assertTrue(collector2.isEarlyTerminated());
         }
