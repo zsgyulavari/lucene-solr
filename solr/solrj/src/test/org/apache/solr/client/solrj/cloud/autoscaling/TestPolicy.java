@@ -923,8 +923,7 @@ public class TestPolicy extends SolrTestCaseJ4 {
   public void testMoveReplicasInMultipleCollections() {
     Map<String, Map> nodeValues = (Map<String, Map>) Utils.fromJSONString("{" +
         "node1:{cores:2}," +
-        "node3:{cores:4}," +
-        "node2:{cores:2}" +
+        "node3:{cores:4}" +
         "}");
     String clusterState = "{\n" +
         "'collection1' : {\n" +
@@ -1621,7 +1620,7 @@ public class TestPolicy extends SolrTestCaseJ4 {
 
           @Override
           public Map<String, Map<String, List<ReplicaInfo>>> getReplicaInfo(String node, Collection<String> keys) {
-            return getReplicaDetails(node, clusterState);
+            return getReplicaDetails(node, clusterS);
           }
         };
       }

@@ -513,7 +513,7 @@ public class Suggestion {
 
     },
 
-    @Meta(name = "withCollection", type = String.class)
+    @Meta(name = "withCollection", type = String.class, isNodeSpecificVal = true)
     WITH_COLLECTION() {
       @Override
       boolean match(Object inputVal, Operand op, Object val, String name, Row row) {
@@ -549,15 +549,21 @@ public class Suggestion {
       }
 
       @Override
-      public void projectRemoveReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector) {
+      public void addViolatingReplicas(ViolationCtx ctx) {
         // todo nocommit
-        super.projectRemoveReplica(cell, ri, opCollector);
+        super.addViolatingReplicas(ctx);
       }
 
       @Override
       public int compareViolation(Violation v1, Violation v2) {
         // todo nocommit
         return super.compareViolation(v1, v2);
+      }
+
+      @Override
+      public void getSuggestions(SuggestionCtx ctx) {
+        // todo nocommit suggest operations that would make violations go away
+        super.getSuggestions(ctx);
       }
     };
 
