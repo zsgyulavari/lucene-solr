@@ -452,10 +452,17 @@ public class ReplicaMutator {
               }
             }
 
+            Map<String, Object> propMap = new HashMap<>();
+            propMap.put(Overseer.QUEUE_OPERATION, OverseerAction.UPDATESHARDSTATE.toLower());
+            propMap.put(ZkStateReader.COLLECTION_PROP, collection.getName());
+            // reset any OFFLINE slices to ACTIVE - either way the split is completed
+            allSlicesCopy.forEach((name, s) -> {
+              if (s.getState() == Slice.State.OFFLINE) {
+                propMap.put(s.getName(), Slice.State.ACTIVE.toString());
+              }
+            });
             if (isLeaderSame) {
               log.info("Sub-shard leader node is still the same one at {} with ZK session id {}. Preparing to switch shard states.", shardParentNode, shardParentZkSession);
-              Map<String, Object> propMap = new HashMap<>();
-              propMap.put(Overseer.QUEUE_OPERATION, OverseerAction.UPDATESHARDSTATE.toLower());
               propMap.put(parentSliceName, Slice.State.INACTIVE.toString());
               propMap.put(sliceName, Slice.State.ACTIVE.toString());
               long now = cloudManager.getTimeSource().getEpochTimeNs();
@@ -470,21 +477,15 @@ public class ReplicaMutator {
                   log.info("TIMINGS Sub-shard " + subShardSlice.getName() + " not available: " + subShardSlice);
                 }
               }
-              propMap.put(ZkStateReader.COLLECTION_PROP, collection.getName());
-              ZkNodeProps m = new ZkNodeProps(propMap);
-              return new SliceMutator(cloudManager).updateShardState(prevState, m).collection;
             } else  {
               // we must mark the shard split as failed by switching sub-shards to recovery_failed state
-              Map<String, Object> propMap = new HashMap<>();
-              propMap.put(Overseer.QUEUE_OPERATION, "updateshardstate");
               propMap.put(sliceName, Slice.State.RECOVERY_FAILED.toString());
               for (Slice subShardSlice : subShardSlices) {
                 propMap.put(subShardSlice.getName(), Slice.State.RECOVERY_FAILED.toString());
               }
-              propMap.put(ZkStateReader.COLLECTION_PROP, collection.getName());
-              ZkNodeProps m = new ZkNodeProps(propMap);
-              return new SliceMutator(cloudManager).updateShardState(prevState, m).collection;
             }
+            ZkNodeProps m = new ZkNodeProps(propMap);
+            return new SliceMutator(cloudManager).updateShardState(prevState, m).collection;
           }
         }
       }

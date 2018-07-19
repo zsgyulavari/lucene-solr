@@ -109,6 +109,9 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
     PolicyHelper.SessionWrapper sessionWrapper = null;
 
     Slice parentSlice = getParentSlice(clusterState, collectionName, slice, splitKey);
+    if (parentSlice.getState() != Slice.State.ACTIVE) {
+      throw new SolrException(SolrException.ErrorCode.INVALID_STATE, "Parent slice is not active: " + parentSlice.getState());
+    }
 
     // find the leader for the shard
     Replica parentShardLeader = null;
@@ -138,7 +141,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
       collection.getSlices().forEach(s -> {
         if (s.getState() == Slice.State.ACTIVE) {
           offlineSlices.add(s.getName());
-          propMap.put(s.getName(), Slice.State.INACTIVE.toString());
+          propMap.put(s.getName(), Slice.State.OFFLINE.toString());
         }
       });
       propMap.put(ZkStateReader.COLLECTION_PROP, collectionName);
@@ -458,7 +461,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
       }
 
       // we must set the slice state into recovery before actually creating the replica cores
-      // this ensures that the logic inside Overseer to update sub-shard state to 'active'
+      // this ensures that the logic inside ReplicaMutator to update sub-shard state to 'active'
       // always gets a chance to execute. See SOLR-7673
 
       if (repFactor == 1) {
@@ -500,31 +503,6 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
 
       log.info("Successfully created all replica shards for all sub-slices " + subSlices);
 
-      if (offline) {
-        // re-activate all previously deactivated slices except for the parent
-        DistributedQueue inQueue = Overseer.getStateUpdateQueue(zkStateReader.getZkClient());
-        final Map<String, Object> propMap = new HashMap<>();
-        boolean sendUpdateState = false;
-        propMap.put(Overseer.QUEUE_OPERATION, OverseerAction.UPDATESHARDSTATE.toLower());
-        propMap.put(ZkStateReader.COLLECTION_PROP, collectionName);
-
-        for (String sliceName : offlineSlices) {
-          if (sliceName.equals(slice.get())) {
-            continue;
-          }
-          propMap.put(sliceName, Slice.State.ACTIVE.toString());
-          sendUpdateState = true;
-        }
-
-        if (sendUpdateState) {
-          try {
-            ZkNodeProps m = new ZkNodeProps(propMap);
-            inQueue.offer(Utils.toJSON(m));
-          } catch (Exception e) {
-            throw new Exception("Could not re-activate offline slices", e);
-          }
-        }
-      }
       t = timings.sub("finalCommit");
       ocmh.commit(results, slice.get(), parentShardLeader);
       t.stop();
@@ -617,7 +595,8 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
 
     // if parent is inactive activate it again
     Slice parentSlice = coll.getSlice(parentShard);
-    if (parentSlice.getState() == Slice.State.INACTIVE) {
+    if (parentSlice.getState() == Slice.State.INACTIVE ||
+        parentSlice.getState() == Slice.State.OFFLINE) {
       sendUpdateState = true;
       propMap.put(parentShard, Slice.State.ACTIVE.toString());
     }
