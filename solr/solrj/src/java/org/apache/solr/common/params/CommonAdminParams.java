@@ -25,7 +25,7 @@ public interface CommonAdminParams
   String WAIT_FOR_FINAL_STATE = "waitForFinalState";
   /** Allow in-place move of replicas that use shared filesystems. */
   String IN_PLACE_MOVE = "inPlaceMove";
-  /** Put collection off-line (with all shard in INACTIVE state). */
+  /** Method to use for shard splitting. */
   String SPLIT_METHOD = "splitMethod";
   /** Timeout for replicas to become active. */
   String TIMEOUT = "timeout";
