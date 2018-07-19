@@ -26,7 +26,7 @@ public interface CommonAdminParams
   /** Allow in-place move of replicas that use shared filesystems. */
   String IN_PLACE_MOVE = "inPlaceMove";
   /** Put collection off-line (with all shard in INACTIVE state). */
-  String OFFLINE = "offline";
+  String SPLIT_METHOD = "splitMethod";
   /** Timeout for replicas to become active. */
   String TIMEOUT = "timeout";
 }

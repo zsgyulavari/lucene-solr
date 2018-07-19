@@ -30,11 +30,13 @@ import org.apache.solr.common.cloud.ClusterState;
 import org.apache.solr.common.cloud.DocCollection;
 import org.apache.solr.common.cloud.DocRouter;
 import org.apache.solr.common.cloud.Slice;
+import org.apache.solr.common.params.CommonAdminParams;
 import org.apache.solr.common.params.CoreAdminParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.request.LocalSolrQueryRequest;
 import org.apache.solr.request.SolrQueryRequest;
+import org.apache.solr.update.SolrIndexSplitter;
 import org.apache.solr.update.SplitIndexCommand;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -78,7 +80,11 @@ class SplitOp implements CoreAdminHandler.CoreAdminOp {
     }
 
     log.info("Invoked split action for core: " + cname);
-    boolean offline = params.getBool("offline", true);
+    String methodStr = params.get(CommonAdminParams.SPLIT_METHOD, SolrIndexSplitter.SplitMethod.REWRITE.toLower());
+    SolrIndexSplitter.SplitMethod splitMethod = SolrIndexSplitter.SplitMethod.get(methodStr);
+    if (splitMethod == null) {
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Unsupported value of '" + CommonAdminParams.SPLIT_METHOD + "': " + methodStr);
+    }
     SolrCore parentCore = it.handler.coreContainer.getCore(cname);
     List<SolrCore> newCores = null;
     SolrQueryRequest req = null;
@@ -134,7 +140,7 @@ class SplitOp implements CoreAdminHandler.CoreAdminOp {
 
       req = new LocalSolrQueryRequest(parentCore, params);
 
-      SplitIndexCommand cmd = new SplitIndexCommand(req, it.rsp, paths, newCores, ranges, router, routeFieldName, splitKey, offline);
+      SplitIndexCommand cmd = new SplitIndexCommand(req, it.rsp, paths, newCores, ranges, router, routeFieldName, splitKey, splitMethod);
       parentCore.getUpdateHandler().split(cmd);
 
       if (it.handler.coreContainer.isZooKeeperAware()) {

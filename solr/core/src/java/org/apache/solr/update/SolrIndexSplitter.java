@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
@@ -74,6 +75,25 @@ import org.slf4j.LoggerFactory;
 public class SolrIndexSplitter {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+  public enum SplitMethod {
+    REWRITE,
+    LINK;
+
+    public static SplitMethod get(String p) {
+      if (p != null) {
+        try {
+          return SplitMethod.valueOf(p.toUpperCase(Locale.ROOT));
+        } catch (Exception ex) {
+        }
+      }
+      return null;
+    }
+
+    public String toLower() {
+      return toString().toLowerCase(Locale.ROOT);
+    }
+  }
+
   SolrIndexSearcher searcher;
   SchemaField field;
   List<DocRouter.Range> ranges;
@@ -85,7 +105,7 @@ public class SolrIndexSplitter {
   int numPieces;
   String routeFieldName;
   String splitKey;
-  boolean offline;
+  SplitMethod splitMethod;
   RTimerTree timings = new RTimerTree();
 
   public SolrIndexSplitter(SplitIndexCommand cmd) {
@@ -112,9 +132,9 @@ public class SolrIndexSplitter {
       splitKey = getRouteKey(cmd.splitKey);
     }
     if (cores == null) {
-      this.offline = false;
+      this.splitMethod = SplitMethod.REWRITE;
     } else {
-      this.offline = cmd.offline;
+      this.splitMethod = cmd.splitMethod;
     }
   }
 
@@ -122,19 +142,33 @@ public class SolrIndexSplitter {
     SolrCore parentCore = searcher.getCore();
     Directory parentDirectory = searcher.getRawReader().directory();
     Lock parentDirectoryLock = null;
-    if (offline) {
+    UpdateLog ulog = parentCore.getUpdateHandler().getUpdateLog();
+    if (ulog == null && splitMethod == SplitMethod.LINK) {
+      log.warn("No updateLog in parent core, switching to use potentially slower 'splitMethod=rewrite'");
+      splitMethod = SplitMethod.REWRITE;
+    }
+    if (splitMethod == SplitMethod.LINK) {
       RTimerTree t = timings.sub("closeParentIW");
       try {
+        // start buffering updates
+        ulog.bufferUpdates();
         parentCore.getSolrCoreState().closeIndexWriter(parentCore, false);
         // make sure we can lock the directory for our exclusive use
         parentDirectoryLock = parentDirectory.obtainLock(IndexWriter.WRITE_LOCK_NAME);
-        log.info("Splitting in 'offline' mode: closed parent IndexWriter...");
+        log.info("Splitting in 'link' mode: closed parent IndexWriter...");
         t.stop();
       } catch (Exception e) {
         if (parentDirectoryLock != null) {
           IOUtils.closeWhileHandlingException(parentDirectoryLock);
         }
-        parentCore.getSolrCoreState().openIndexWriter(parentCore);
+        try {
+          parentCore.getSolrCoreState().openIndexWriter(parentCore);
+          ulog.applyBufferedUpdates();
+        } catch (Exception e1) {
+          log.error("Error reopening IndexWriter after failed close", e1);
+          log.error("Original error closing IndexWriter:", e);
+          throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Error reopening IndexWriter after failed close", e1);
+        }
         throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Error closing current IndexWriter, aborting offline split...", e);
       }
     }
@@ -148,10 +182,13 @@ public class SolrIndexSplitter {
       results.add("failed", e.toString());
       throw e;
     } finally {
-      if (offline) {
+      if (splitMethod == SplitMethod.LINK) {
         IOUtils.closeWhileHandlingException(parentDirectoryLock);
         RTimerTree t = timings.sub("reopenParentIW");
         parentCore.getSolrCoreState().openIndexWriter(parentCore);
+        t.stop();
+        t = timings.sub("parentApplyBufferedUpdates");
+        ulog.applyBufferedUpdates();
         t.stop();
         log.info("Splitting in 'offline' mode " + (success? "finished" : "FAILED") +
             ": re-opened parent IndexWriter.");
@@ -170,7 +207,7 @@ public class SolrIndexSplitter {
     log.info("SolrIndexSplitter: partitions=" + numPieces + " segments="+leaves.size());
     RTimerTree t;
 
-    if (!offline) {
+    if (splitMethod != SplitMethod.LINK) {
       t = timings.sub("findDocSetsPerLeaf");
       for (LeafReaderContext readerContext : leaves) {
         assert readerContext.ordInParent == segmentDocSets.size();  // make sure we're going in order
@@ -195,12 +232,12 @@ public class SolrIndexSplitter {
 
       RefCounted<IndexWriter> iwRef = null;
       IndexWriter iw;
-      if (cores != null && !offline) {
+      if (cores != null && splitMethod != SplitMethod.LINK) {
         SolrCore subCore = cores.get(partitionNumber);
         iwRef = subCore.getUpdateHandler().getSolrCoreState().getIndexWriter(subCore);
         iw = iwRef.get();
       } else {
-        if (offline) {
+        if (splitMethod == SplitMethod.LINK) {
           SolrCore subCore = cores.get(partitionNumber);
           String path = subCore.getDataDir() + "index.split";
           t = timings.sub("hardLinkCopy");
@@ -247,7 +284,7 @@ public class SolrIndexSplitter {
       }
 
       try {
-        if (offline) {
+        if (splitMethod == SplitMethod.LINK) {
           t = timings.sub("deleteDocuments");
           t.resume();
           iw.deleteDocuments(new ShardSplitingQuery(partitionNumber, field, rangesArr, router, splitKey, docsToDelete));
@@ -285,7 +322,7 @@ public class SolrIndexSplitter {
           } else {
             IOUtils.closeWhileHandlingException(iw);
           }
-          if (offline) {
+          if (splitMethod == SplitMethod.LINK) {
             SolrCore subCore = cores.get(partitionNumber);
             subCore.getDirectoryFactory().release(iw.getDirectory());
           }
@@ -294,7 +331,7 @@ public class SolrIndexSplitter {
     }
     // all sub-indexes created ok
     // when using hard-linking switch directories & refresh cores
-    if (offline && cores != null) {
+    if (splitMethod == SplitMethod.LINK && cores != null) {
       boolean switchOk = true;
       t = timings.sub("switchSubIndexes");
       for (int partitionNumber = 0; partitionNumber < numPieces; partitionNumber++) {

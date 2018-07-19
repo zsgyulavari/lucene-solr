@@ -1129,7 +1129,7 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
     protected String ranges;
     protected String splitKey;
     protected String shard;
-    protected boolean offline;
+    protected String splitMethod;
 
     private Properties properties;
 
@@ -1141,13 +1141,13 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
     public SplitShard setRanges(String ranges) { this.ranges = ranges; return this; }
     public String getRanges() { return ranges; }
 
-    public SplitShard setOffline(boolean offline) {
-      this.offline = offline;
+    public SplitShard setSplitMethod(String splitMethod) {
+      this.splitMethod = splitMethod;
       return this;
     }
 
-    public boolean getOffline() {
-      return offline;
+    public String getSplitMethod() {
+      return splitMethod;
     }
 
     public SplitShard setSplitKey(String splitKey) {
@@ -1186,7 +1186,7 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
       params.set(CoreAdminParams.SHARD, shard);
       params.set("split.key", this.splitKey);
       params.set(CoreAdminParams.RANGES, ranges);
-      params.set(CommonAdminParams.OFFLINE, offline);
+      params.set(CommonAdminParams.SPLIT_METHOD, splitMethod);
 
       if(properties != null) {
         addProperties(params, properties);

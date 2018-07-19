@@ -455,12 +455,6 @@ public class ReplicaMutator {
             Map<String, Object> propMap = new HashMap<>();
             propMap.put(Overseer.QUEUE_OPERATION, OverseerAction.UPDATESHARDSTATE.toLower());
             propMap.put(ZkStateReader.COLLECTION_PROP, collection.getName());
-            // reset any OFFLINE slices to ACTIVE - either way the split is completed
-            allSlicesCopy.forEach((name, s) -> {
-              if (s.getState() == Slice.State.OFFLINE) {
-                propMap.put(s.getName(), Slice.State.ACTIVE.toString());
-              }
-            });
             if (isLeaderSame) {
               log.info("Sub-shard leader node is still the same one at {} with ZK session id {}. Preparing to switch shard states.", shardParentNode, shardParentZkSession);
               propMap.put(parentSliceName, Slice.State.INACTIVE.toString());

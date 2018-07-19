@@ -143,7 +143,7 @@ import static org.apache.solr.common.params.CollectionAdminParams.PROPERTY_VALUE
 import static org.apache.solr.common.params.CollectionParams.CollectionAction.*;
 import static org.apache.solr.common.params.CommonAdminParams.ASYNC;
 import static org.apache.solr.common.params.CommonAdminParams.IN_PLACE_MOVE;
-import static org.apache.solr.common.params.CommonAdminParams.OFFLINE;
+import static org.apache.solr.common.params.CommonAdminParams.SPLIT_METHOD;
 import static org.apache.solr.common.params.CommonAdminParams.WAIT_FOR_FINAL_STATE;
 import static org.apache.solr.common.params.CommonParams.NAME;
 import static org.apache.solr.common.params.CommonParams.TIMING;
@@ -666,7 +666,7 @@ public class CollectionsHandler extends RequestHandlerBase implements Permission
           CoreAdminParams.RANGES,
           WAIT_FOR_FINAL_STATE,
           TIMING,
-          OFFLINE);
+          SPLIT_METHOD);
       return copyPropertiesWithPrefix(req.getParams(), map, COLL_PROP_PREFIX);
     }),
     DELETESHARD_OP(DELETESHARD, (req, rsp, h) -> {

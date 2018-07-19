@@ -64,6 +64,7 @@ import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.Utils;
+import org.apache.solr.update.SolrIndexSplitter;
 import org.apache.solr.util.LogLevel;
 import org.apache.solr.util.TestInjection;
 import org.junit.Test;
@@ -121,22 +122,22 @@ public class ShardSplitTest extends BasicDistributedZkTest {
    */
   @Test
   public void testSplitStaticIndexReplication() throws Exception {
-    doSplitStaticIndexReplication(false);
+    doSplitStaticIndexReplication(SolrIndexSplitter.SplitMethod.REWRITE);
   }
 
   @Test
-  public void testSplitStaticIndexReplicationOffline() throws Exception {
-    doSplitStaticIndexReplication(true);
+  public void testSplitStaticIndexReplicationLink() throws Exception {
+    doSplitStaticIndexReplication(SolrIndexSplitter.SplitMethod.LINK);
   }
 
-  private void doSplitStaticIndexReplication(boolean offline) throws Exception {
+  private void doSplitStaticIndexReplication(SolrIndexSplitter.SplitMethod splitMethod) throws Exception {
     waitForThingsToLevelOut(15);
 
     DocCollection defCol = cloudClient.getZkStateReader().getClusterState().getCollection(AbstractDistribZkTestBase.DEFAULT_COLLECTION);
     Replica replica = defCol.getReplicas().get(0);
     String nodeName = replica.getNodeName();
 
-    String collectionName = "testSplitStaticIndexReplication_" + (offline ? "offline" : "online");
+    String collectionName = "testSplitStaticIndexReplication_" + splitMethod.toLower();
     CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(collectionName, "conf1", 1, 1);
     create.setMaxShardsPerNode(5); // some high number so we can create replicas without hindrance
     create.setCreateNodeSet(nodeName); // we want to create the leader on a fixed node so that we know which one to restart later
@@ -154,7 +155,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
 
         CollectionAdminRequest.SplitShard splitShard = CollectionAdminRequest.splitShard(collectionName);
         splitShard.setShardName(SHARD1);
-        splitShard.setOffline(offline);
+        splitShard.setSplitMethod(splitMethod.toLower());
         String asyncId = splitShard.processAsync(client);
         RequestStatusState state = CollectionAdminRequest.requestStatus(asyncId).waitFor(client, 120);
         if (state == RequestStatusState.COMPLETED)  {
@@ -365,17 +366,17 @@ public class ShardSplitTest extends BasicDistributedZkTest {
 
   @Test
   public void testSplitMixedReplicaTypes() throws Exception {
-    doSplitMixedReplicaTypes(false);
+    doSplitMixedReplicaTypes(SolrIndexSplitter.SplitMethod.REWRITE);
   }
 
   @Test
-  public void testSplitMixedReplicaTypesOffline() throws Exception {
-    doSplitMixedReplicaTypes(true);
+  public void testSplitMixedReplicaTypesLink() throws Exception {
+    doSplitMixedReplicaTypes(SolrIndexSplitter.SplitMethod.LINK);
   }
 
-  private void doSplitMixedReplicaTypes(boolean offline) throws Exception {
+  private void doSplitMixedReplicaTypes(SolrIndexSplitter.SplitMethod splitMethod) throws Exception {
     waitForThingsToLevelOut(15);
-    String collectionName = "testSplitMixedReplicaTypes" + (offline ? "offline" : "online");
+    String collectionName = "testSplitMixedReplicaTypes_" + splitMethod.toLower();
     CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(collectionName, "conf1", 1, 2, 2, 2);
     create.setMaxShardsPerNode(5); // some high number so we can create replicas without hindrance
     create.process(cloudClient);
@@ -388,7 +389,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
 
     CollectionAdminRequest.SplitShard splitShard = CollectionAdminRequest.splitShard(collectionName);
     splitShard.setShardName(SHARD1);
-    splitShard.setOffline(offline);
+    splitShard.setSplitMethod(splitMethod.toLower());
     CollectionAdminResponse rsp = splitShard.process(cloudClient);
     waitForThingsToLevelOut(15);
 
@@ -629,15 +630,15 @@ public class ShardSplitTest extends BasicDistributedZkTest {
 
   @Test
   public void testSplitShardWithRule() throws Exception {
-    doSplitShardWithRule(false);
+    doSplitShardWithRule(SolrIndexSplitter.SplitMethod.LINK);
   }
 
   @Test
-  public void testSplitShardWithRuleOffline() throws Exception {
-    doSplitShardWithRule(true);
+  public void testSplitShardWithRuleLink() throws Exception {
+    doSplitShardWithRule(SolrIndexSplitter.SplitMethod.LINK);
   }
 
-  private void doSplitShardWithRule(boolean offline) throws Exception {
+  private void doSplitShardWithRule(SolrIndexSplitter.SplitMethod splitMethod) throws Exception {
     waitForThingsToLevelOut(15);
 
     if (usually()) {
@@ -647,14 +648,14 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     }
 
     log.info("Starting testSplitShardWithRule");
-    String collectionName = "shardSplitWithRule_" + (offline ? "offline" : "online");
+    String collectionName = "shardSplitWithRule_" + splitMethod.toLower();
     CollectionAdminRequest.Create createRequest = CollectionAdminRequest.createCollection(collectionName, "conf1", 1, 2)
         .setRule("shard:*,replica:<2,node:*");
     CollectionAdminResponse response = createRequest.process(cloudClient);
     assertEquals(0, response.getStatus());
 
     CollectionAdminRequest.SplitShard splitShardRequest = CollectionAdminRequest.splitShard(collectionName)
-        .setShardName("shard1").setOffline(offline);
+        .setShardName("shard1").setSplitMethod(splitMethod.toLower());
     response = splitShardRequest.process(cloudClient);
     assertEquals(String.valueOf(response.getErrorMessages()), 0, response.getStatus());
   }

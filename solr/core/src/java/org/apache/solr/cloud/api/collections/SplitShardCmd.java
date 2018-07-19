@@ -58,6 +58,7 @@ import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.Utils;
 import org.apache.solr.handler.component.ShardHandler;
+import org.apache.solr.update.SolrIndexSplitter;
 import org.apache.solr.util.RTimerTree;
 import org.apache.solr.util.TestInjection;
 import org.apache.zookeeper.KeeperException;
@@ -90,7 +91,12 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
 
   public boolean split(ClusterState clusterState, ZkNodeProps message, NamedList results) throws Exception {
     boolean waitForFinalState = message.getBool(CommonAdminParams.WAIT_FOR_FINAL_STATE, false);
-    boolean offline = message.getBool(CommonAdminParams.OFFLINE, false);
+    String methodStr = message.getStr(CommonAdminParams.SPLIT_METHOD, SolrIndexSplitter.SplitMethod.REWRITE.toLower());
+    SolrIndexSplitter.SplitMethod splitMethod = SolrIndexSplitter.SplitMethod.get(methodStr);
+    if (splitMethod == null) {
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Unknown value '" + CommonAdminParams.SPLIT_METHOD +
+          ": " + methodStr);
+    }
     boolean withTiming = message.getBool(CommonParams.TIMING, false);
 
     String collectionName = message.getStr(CoreAdminParams.COLLECTION);
@@ -131,23 +137,6 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
     if (leaderZnodeStat == null)  {
       // we just got to know the leader but its live node is gone already!
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "The shard leader node: " + parentShardLeader.getNodeName() + " is not live anymore!");
-    }
-
-    if (offline) {
-      // deactivate all slices
-      DistributedQueue inQueue = Overseer.getStateUpdateQueue(zkStateReader.getZkClient());
-      Map<String, Object> propMap = new HashMap<>();
-      propMap.put(Overseer.QUEUE_OPERATION, OverseerAction.UPDATESHARDSTATE.toLower());
-      collection.getSlices().forEach(s -> {
-        if (s.getState() == Slice.State.ACTIVE) {
-          offlineSlices.add(s.getName());
-          propMap.put(s.getName(), Slice.State.OFFLINE.toString());
-        }
-      });
-      propMap.put(ZkStateReader.COLLECTION_PROP, collectionName);
-      ZkNodeProps m = new ZkNodeProps(propMap);
-      inQueue.offer(Utils.toJSON(m));
-      log.debug("Offline mode - deactivated slices: " + offlineSlices);
     }
 
     List<DocRouter.Range> subRanges = new ArrayList<>();
@@ -311,7 +300,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
 
       ModifiableSolrParams params = new ModifiableSolrParams();
       params.set(CoreAdminParams.ACTION, CoreAdminParams.CoreAdminAction.SPLIT.toString());
-      params.set("offline", String.valueOf(offline));
+      params.set(CommonAdminParams.SPLIT_METHOD, splitMethod.toLower());
       params.set(CoreAdminParams.CORE, parentShardLeader.getStr("core"));
       for (int i = 0; i < subShardNames.size(); i++) {
         String subShardName = subShardNames.get(i);
@@ -329,27 +318,25 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
 
       log.debug("Index on shard: " + nodeName + " split into two successfully");
 
-      if (!offline) {
-        t = timings.sub("applyBufferedUpdates");
-        // apply buffered updates on sub-shards
-        for (int i = 0; i < subShardNames.size(); i++) {
-          String subShardName = subShardNames.get(i);
+      t = timings.sub("applyBufferedUpdates");
+      // apply buffered updates on sub-shards
+      for (int i = 0; i < subShardNames.size(); i++) {
+        String subShardName = subShardNames.get(i);
 
-          log.debug("Applying buffered updates on : " + subShardName);
+        log.debug("Applying buffered updates on : " + subShardName);
 
-          params = new ModifiableSolrParams();
-          params.set(CoreAdminParams.ACTION, CoreAdminParams.CoreAdminAction.REQUESTAPPLYUPDATES.toString());
-          params.set(CoreAdminParams.NAME, subShardName);
+        params = new ModifiableSolrParams();
+        params.set(CoreAdminParams.ACTION, CoreAdminParams.CoreAdminAction.REQUESTAPPLYUPDATES.toString());
+        params.set(CoreAdminParams.NAME, subShardName);
 
-          ocmh.sendShardRequest(nodeName, params, shardHandler, asyncId, requestMap);
-        }
-
-        ocmh.processResponses(results, shardHandler, true, "SPLITSHARD failed while asking sub shard leaders" +
-            " to apply buffered updates", asyncId, requestMap);
-        t.stop();
-
-        log.debug("Successfully applied buffered updates on : " + subShardNames);
+        ocmh.sendShardRequest(nodeName, params, shardHandler, asyncId, requestMap);
       }
+
+      ocmh.processResponses(results, shardHandler, true, "SPLITSHARD failed while asking sub shard leaders" +
+          " to apply buffered updates", asyncId, requestMap);
+      t.stop();
+
+      log.debug("Successfully applied buffered updates on : " + subShardNames);
 
       // Replica creation for the new Slices
       // replica placement is controlled by the autoscaling policy framework
@@ -595,8 +582,7 @@ public class SplitShardCmd implements OverseerCollectionMessageHandler.Cmd {
 
     // if parent is inactive activate it again
     Slice parentSlice = coll.getSlice(parentShard);
-    if (parentSlice.getState() == Slice.State.INACTIVE ||
-        parentSlice.getState() == Slice.State.OFFLINE) {
+    if (parentSlice.getState() == Slice.State.INACTIVE) {
       sendUpdateState = true;
       propMap.put(parentShard, Slice.State.ACTIVE.toString());
     }

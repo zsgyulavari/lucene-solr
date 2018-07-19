@@ -72,13 +72,6 @@ public class Slice extends ZkNodeProps implements Iterable<Replica> {
     INACTIVE,
 
     /**
-     * Shards are put in that state while "offline" splitting is in progress. See
-     * <a href="https://lucene.apache.org/solr/guide/collections-api.html#splitshard">
-     * the reference guide</a> for more details.
-     */
-    OFFLINE,
-
-    /**
      * When a shard is split, the new sub-shards are put in that state while the
      * split operation is in progress. It's also used when the shard is undergoing data restoration.
      * A shard in this state still receives

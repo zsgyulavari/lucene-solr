@@ -37,10 +37,10 @@ public class SplitIndexCommand extends UpdateCommand {
   public DocRouter router;
   public String routeFieldName;
   public String splitKey;
-  public boolean offline;
+  public SolrIndexSplitter.SplitMethod splitMethod;
 
   public SplitIndexCommand(SolrQueryRequest req, SolrQueryResponse rsp, List<String> paths, List<SolrCore> cores, List<DocRouter.Range> ranges,
-                           DocRouter router, String routeFieldName, String splitKey, boolean offline) {
+                           DocRouter router, String routeFieldName, String splitKey, SolrIndexSplitter.SplitMethod splitMethod) {
     super(req);
     this.rsp = rsp;
     this.paths = paths;
@@ -49,7 +49,7 @@ public class SplitIndexCommand extends UpdateCommand {
     this.router = router;
     this.routeFieldName = routeFieldName;
     this.splitKey = splitKey;
-    this.offline = offline;
+    this.splitMethod = splitMethod;
   }
 
   @Override
@@ -70,7 +70,7 @@ public class SplitIndexCommand extends UpdateCommand {
     if (splitKey != null) {
       sb.append(",split.key=" + splitKey);
     }
-    sb.append(",offline=" + offline);
+    sb.append(",method=" + splitMethod.toLower());
     sb.append('}');
     return sb.toString();
   }
