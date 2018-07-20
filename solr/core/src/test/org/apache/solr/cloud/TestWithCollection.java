@@ -268,7 +268,7 @@ public class TestWithCollection extends SolrCloudTestCase {
     DocCollection collection = solrClient.getZkStateReader().getClusterState().getCollection(xyz);
     assertEquals(chosenNode, collection.getReplicas().iterator().next().getNodeName());
 
-    zkClient().printLayoutToStdOut();
+//    zkClient().printLayoutToStdOut();
 
     CollectionAdminRequest.addReplicaToShard(xyz, "shard1")
         .process(solrClient);
@@ -320,7 +320,7 @@ public class TestWithCollection extends SolrCloudTestCase {
 
     new CollectionAdminRequest.MoveReplica(xyz, collection.getReplicas().iterator().next().getName(), otherNode)
         .process(solrClient);
-    zkClient().printLayoutToStdOut();
+//    zkClient().printLayoutToStdOut();
     collection = solrClient.getZkStateReader().getClusterState().getCollection(xyz); // refresh
     DocCollection withCollectionRefreshed = solrClient.getZkStateReader().getClusterState().getCollection(abc); // refresh
     assertTrue(collection.getReplicas().stream().noneMatch(
@@ -376,7 +376,7 @@ public class TestWithCollection extends SolrCloudTestCase {
     } catch (HttpSolrClient.RemoteSolrException e) {
       assertTrue(e.getMessage().contains("Collection: testMoveReplicaWithCollection_abc is co-located with collection: testMoveReplicaWithCollection_xyz"));
     }
-    zkClient().printLayoutToStdOut();
+//    zkClient().printLayoutToStdOut();
     collection = solrClient.getZkStateReader().getClusterState().getCollection(xyz); // refresh
     DocCollection withCollectionRefreshed = solrClient.getZkStateReader().getClusterState().getCollection(abc); // refresh
 

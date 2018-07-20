@@ -23,6 +23,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -36,6 +37,7 @@ import java.util.stream.Collectors;
 
 import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.V2RequestSupport;
+import org.apache.solr.client.solrj.cloud.SolrCloudManager;
 import org.apache.solr.client.solrj.cloud.autoscaling.Clause.ComputedType;
 import org.apache.solr.client.solrj.cloud.autoscaling.Violation.ReplicaInfoAndErr;
 import org.apache.solr.common.cloud.Replica;
@@ -47,6 +49,7 @@ import static java.util.Collections.emptySet;
 import static java.util.Collections.unmodifiableSet;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Clause.parseString;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Policy.ANY;
+import static org.apache.solr.common.params.CollectionParams.CollectionAction.ADDREPLICA;
 import static org.apache.solr.common.params.CollectionParams.CollectionAction.MOVEREPLICA;
 
 public class Suggestion {
@@ -548,22 +551,44 @@ public class Suggestion {
         }
       }
 
+      /**
+       * We must find the replicas of the violating collection (shard does not matter)
+       * on the violating node and add them to the violation using {@link Violation#addReplica(ReplicaInfoAndErr)}
+       */
       @Override
       public void addViolatingReplicas(ViolationCtx ctx) {
-        // todo nocommit
-        super.addViolatingReplicas(ctx);
+        String collectionName = ctx.currentViolation.coll;
+        String node = ctx.currentViolation.node;
+        for (Row row : ctx.allRows) {
+          if (node.equals(row.node))  {
+            row.forEachReplica(r -> {
+              if (collectionName.equals(r.getCollection())) {
+                ctx.currentViolation.addReplica(new ReplicaInfoAndErr(r).withDelta(1.0d));
+              }
+            });
+          }
+        }
       }
 
       @Override
       public int compareViolation(Violation v1, Violation v2) {
-        // todo nocommit
-        return super.compareViolation(v1, v2);
+        return Integer.compare(v1.getViolatingReplicas().size(), v2.getViolatingReplicas().size());
       }
 
       @Override
       public void getSuggestions(SuggestionCtx ctx) {
-        // todo nocommit suggest operations that would make violations go away
-        super.getSuggestions(ctx);
+        Map<String, Object> nodeValues = ctx.session.nodeStateProvider.getNodeValues(ctx.violation.node, Collections.singleton(WITH_COLLECTION.tagName));
+        Map<String, String> withCollectionsMap = (Map<String, String>) nodeValues.get(WITH_COLLECTION.tagName);
+        if (withCollectionsMap == null) return;
+
+        String withCollection = withCollectionsMap.get(ctx.violation.coll);
+        if (withCollection == null) return;
+
+        Suggester suggester = ctx.session.getSuggester(ADDREPLICA)
+            .forceOperation(true)
+            .hint(Suggester.Hint.COLL_SHARD, new Pair<>(withCollection, "shard1"))
+            .hint(Suggester.Hint.TARGET_NODE, ctx.violation.node);
+        ctx.addSuggestion(suggester);
       }
     };
 
