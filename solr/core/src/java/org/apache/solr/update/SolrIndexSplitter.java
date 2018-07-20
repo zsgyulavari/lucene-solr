@@ -18,7 +18,9 @@ package org.apache.solr.update;
 
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -64,6 +66,7 @@ import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.DirectoryFactory;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.handler.IndexFetcher;
+import org.apache.solr.handler.SnapShooter;
 import org.apache.solr.schema.SchemaField;
 import org.apache.solr.search.BitsFilteredPostingsEnum;
 import org.apache.solr.search.SolrIndexSearcher;
@@ -203,6 +206,7 @@ public class SolrIndexSplitter {
     Directory parentDirectory = searcher.getRawReader().directory();
     List<FixedBitSet[]> segmentDocSets = new ArrayList<>(leaves.size());
     SolrIndexConfig parentConfig = searcher.getCore().getSolrConfig().indexConfig;
+    String timestamp = new SimpleDateFormat(SnapShooter.DATE_FMT, Locale.ROOT).format(new Date());
 
     log.info("SolrIndexSplitter: partitions=" + numPieces + " segments="+leaves.size());
     RTimerTree t;
@@ -239,7 +243,7 @@ public class SolrIndexSplitter {
       } else {
         if (splitMethod == SplitMethod.LINK) {
           SolrCore subCore = cores.get(partitionNumber);
-          String path = subCore.getDataDir() + "index.split";
+          String path = subCore.getDataDir() + "index." + timestamp;
           t = timings.sub("hardLinkCopy");
           t.resume();
           // copy by hard-linking
@@ -339,8 +343,8 @@ public class SolrIndexSplitter {
         String indexDirPath = subCore.getIndexDir();
 
         log.debug("Switching directories");
-        String hardLinkPath = subCore.getDataDir() + "index.split";
-        subCore.modifyIndexProps("index.split");
+        String hardLinkPath = subCore.getDataDir() + "index." + timestamp;
+        subCore.modifyIndexProps("index." + timestamp);
         try {
           subCore.getUpdateHandler().newIndexWriter(false);
           openNewSearcher(subCore);
@@ -367,7 +371,7 @@ public class SolrIndexSplitter {
             }
           }
           // switch back if necessary and remove the hardlinked dir
-          String hardLinkPath = subCore.getDataDir() + "index.split";
+          String hardLinkPath = subCore.getDataDir() + "index." + timestamp;
           try {
             dir = subCore.getDirectoryFactory().get(hardLinkPath, DirectoryFactory.DirContext.DEFAULT,
                 subCore.getSolrConfig().indexConfig.lockType);
@@ -479,7 +483,7 @@ public class SolrIndexSplitter {
         return perPartition[partition];
       }
       synchronized (docsToDelete) {
-        perPartition = docsToDelete.get(readerContext.ord);
+        perPartition = docsToDelete.get(readerContext.reader().getCoreCacheHelper().getKey());
         if (perPartition != null) {
           return perPartition[partition];
         }

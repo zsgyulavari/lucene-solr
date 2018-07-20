@@ -181,8 +181,6 @@ public abstract class SolrCoreState {
 
   public abstract Lock getRecoveryLock();
 
-  public abstract ReadWriteLock getIndexWriterLock();
-
   // These are needed to properly synchronize the bootstrapping when the
   // in the target DC require a full sync.
   public abstract boolean getCdcrBootstrapRunning();

@@ -426,11 +426,6 @@ public final class DefaultSolrCoreState extends SolrCoreState implements Recover
   }
 
   @Override
-  public ReadWriteLock getIndexWriterLock() {
-    return iwLock;
-  }
-
-  @Override
   public boolean getCdcrBootstrapRunning() {
     return cdcrRunning.get();
   }

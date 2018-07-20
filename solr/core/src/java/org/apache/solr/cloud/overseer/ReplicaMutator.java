@@ -441,7 +441,7 @@ public class ReplicaMutator {
                   log.error("The shard leader node: {} is not live anymore!", shardParentNode);
                   isLeaderSame = false;
                 } else if (!shardParentZkSession.equals(leaderZnode.getOwner())) {
-                  log.error("The zk session id for shard leader node: {} has changepostd from {} to {}",
+                  log.error("The zk session id for shard leader node: {} has changed from {} to {}",
                       shardParentNode, shardParentZkSession, leaderZnode.getOwner());
                   isLeaderSame = false;
                 }
