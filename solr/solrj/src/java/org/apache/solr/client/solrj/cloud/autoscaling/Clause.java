@@ -335,7 +335,7 @@ public class Clause implements MapWriter, Comparable<Clause> {
       for (Row r : session.matrix) {
         SealedClause sealedClause = getSealedClause(computedValueEvaluator);
         if (!sealedClause.getGlobalTag().isPass(r)) {
-          ConditionType.CORES.addViolatingReplicas(ctx.reset(null, null,
+          sealedClause.getGlobalTag().varType.addViolatingReplicas(ctx.reset(null, null,
               new Violation(sealedClause, null, null, r.node, r.getVal(sealedClause.globalTag.name), sealedClause.globalTag.delta(r.getVal(globalTag.name)), null)));
         }
       }

@@ -37,7 +37,6 @@ import java.util.stream.Collectors;
 
 import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.V2RequestSupport;
-import org.apache.solr.client.solrj.cloud.SolrCloudManager;
 import org.apache.solr.client.solrj.cloud.autoscaling.Clause.ComputedType;
 import org.apache.solr.client.solrj.cloud.autoscaling.Violation.ReplicaInfoAndErr;
 import org.apache.solr.common.cloud.Replica;
@@ -557,15 +556,24 @@ public class Suggestion {
        */
       @Override
       public void addViolatingReplicas(ViolationCtx ctx) {
-        String collectionName = ctx.currentViolation.coll;
         String node = ctx.currentViolation.node;
         for (Row row : ctx.allRows) {
           if (node.equals(row.node))  {
-            row.forEachReplica(r -> {
-              if (collectionName.equals(r.getCollection())) {
-                ctx.currentViolation.addReplica(new ReplicaInfoAndErr(r).withDelta(1.0d));
-              }
-            });
+            Map<String, String> withCollectionMap = (Map<String, String>) row.getVal(WITH_COLLECTION.tagName);
+            if (withCollectionMap != null)  {
+              row.forEachReplica(r -> {
+                String withCollection = withCollectionMap.get(r.getCollection());
+                if (withCollection != null) {
+                  // test whether this row has at least 1 replica of withCollection, else there is a violation
+                  Set<String> uniqueCollections = new HashSet<>();
+                  row.forEachReplica(replicaInfo -> uniqueCollections.add(replicaInfo.getCollection()));
+                  if (!uniqueCollections.contains(withCollection))  {
+                    ctx.currentViolation.addReplica(new ReplicaInfoAndErr(r).withDelta(1.0d));
+                  }
+                }
+              });
+              ctx.currentViolation.replicaCountDelta = (double) ctx.currentViolation.getViolatingReplicas().size();
+            }
           }
         }
       }
@@ -577,18 +585,27 @@ public class Suggestion {
 
       @Override
       public void getSuggestions(SuggestionCtx ctx) {
+        if (ctx.violation.getViolatingReplicas().isEmpty())  return;
+
         Map<String, Object> nodeValues = ctx.session.nodeStateProvider.getNodeValues(ctx.violation.node, Collections.singleton(WITH_COLLECTION.tagName));
         Map<String, String> withCollectionsMap = (Map<String, String>) nodeValues.get(WITH_COLLECTION.tagName);
         if (withCollectionsMap == null) return;
 
-        String withCollection = withCollectionsMap.get(ctx.violation.coll);
-        if (withCollection == null) return;
+        Set<String> uniqueCollections = new HashSet<>();
+        for (ReplicaInfoAndErr replicaInfoAndErr : ctx.violation.getViolatingReplicas()) {
+          uniqueCollections.add(replicaInfoAndErr.replicaInfo.getCollection());
+        }
 
-        Suggester suggester = ctx.session.getSuggester(ADDREPLICA)
-            .forceOperation(true)
-            .hint(Suggester.Hint.COLL_SHARD, new Pair<>(withCollection, "shard1"))
-            .hint(Suggester.Hint.TARGET_NODE, ctx.violation.node);
-        ctx.addSuggestion(suggester);
+        for (String collection : uniqueCollections) {
+          String withCollection = withCollectionsMap.get(collection);
+          if (withCollection == null) continue;
+
+          Suggester suggester = ctx.session.getSuggester(ADDREPLICA)
+              .forceOperation(true)
+              .hint(Suggester.Hint.COLL_SHARD, new Pair<>(withCollection, "shard1"))
+              .hint(Suggester.Hint.TARGET_NODE, ctx.violation.node);
+          ctx.addSuggestion(suggester);
+        }
       }
     };
 

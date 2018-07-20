@@ -389,6 +389,28 @@ public class TestPolicy extends SolrTestCaseJ4 {
           }
         });
     assertNotNull(l);
+    assertEquals(2, l.size());
+
+    // collect the set of nodes to which replicas are being added
+    Set<String> nodes = new HashSet<>(2);
+
+    m = l.get(0).toMap(new LinkedHashMap<>());
+    assertEquals(1.0d, Utils.getObjectByPath(m, true, "violation/violation/delta"));
+    assertEquals("POST", Utils.getObjectByPath(m, true, "operation/method"));
+    assertEquals("/c/articles_coll/shards", Utils.getObjectByPath(m, true, "operation/path"));
+    assertNotNull(Utils.getObjectByPath(m, false, "operation/command/add-replica"));
+    nodes.add((String) Utils.getObjectByPath(m, true, "operation/command/add-replica/node"));
+
+    m = l.get(1).toMap(new LinkedHashMap<>());
+    assertEquals(1.0d, Utils.getObjectByPath(m, true, "violation/violation/delta"));
+    assertEquals("POST", Utils.getObjectByPath(m, true, "operation/method"));
+    assertEquals("/c/articles_coll/shards", Utils.getObjectByPath(m, true, "operation/path"));
+    assertNotNull(Utils.getObjectByPath(m, false, "operation/command/add-replica"));
+    nodes.add((String) Utils.getObjectByPath(m, true, "operation/command/add-replica/node"));
+
+    assertEquals(2, nodes.size());
+    assertTrue(nodes.contains("node1"));
+    assertTrue(nodes.contains("node2"));
   }
 
   public void testValidate() {
