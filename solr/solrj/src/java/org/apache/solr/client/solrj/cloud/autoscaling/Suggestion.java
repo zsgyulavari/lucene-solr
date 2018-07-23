@@ -624,35 +624,30 @@ public class Suggestion {
 
     ConditionType() {
       try {
-        try {
-          meta = ConditionType.class.getField(name()).getAnnotation(Meta.class);
-          if (meta == null) {
-            throw new RuntimeException("Invalid type, should have a @Meta annotation " + name());
-          }
-        } catch (NoSuchFieldException e) {
-          //cannot happen
+        meta = ConditionType.class.getField(name()).getAnnotation(Meta.class);
+        if (meta == null) {
+          throw new RuntimeException("Invalid type, should have a @Meta annotation " + name());
         }
-        this.tagName = meta.name();
-        this.type = meta.type();
-
-        this.vals = readSet(meta.enumVals());
-        this.max = readNum(meta.max());
-        this.min = readNum(meta.min());
-        this.perReplicaValue = readStr(meta.associatedPerReplicaValue());
-        this.associatedPerNodeValues = readSet(meta.associatedPerNodeValue());
-        this.additive = meta.isAdditive();
-        this.metricsAttribute = readStr(meta.metricsKey());
-        this.isPerNodeValue = meta.isNodeSpecificVal();
-        this.supportedComputedTypes = meta.computedValues()[0] == ComputedType.NULL ?
-            emptySet() :
-            unmodifiableSet(new HashSet(Arrays.asList(meta.computedValues())));
-        this.isHidden = meta.isHidden();
-        this.wildCards = readSet(meta.wildCards());
-      } catch (RuntimeException e) {
-        System.out.println("%%%%%%%%ERROR");
-        e.printStackTrace();
-        throw e;
+      } catch (NoSuchFieldException e) {
+        //cannot happen
       }
+      this.tagName = meta.name();
+      this.type = meta.type();
+
+      this.vals = readSet(meta.enumVals());
+      this.max = readNum(meta.max());
+      this.min = readNum(meta.min());
+      this.perReplicaValue = readStr(meta.associatedPerReplicaValue());
+      this.associatedPerNodeValues = readSet(meta.associatedPerNodeValue());
+      this.additive = meta.isAdditive();
+      this.metricsAttribute = readStr(meta.metricsKey());
+      this.isPerNodeValue = meta.isNodeSpecificVal();
+      this.supportedComputedTypes = meta.computedValues()[0] == ComputedType.NULL ?
+          emptySet() :
+          unmodifiableSet(new HashSet(Arrays.asList(meta.computedValues())));
+      this.isHidden = meta.isHidden();
+      this.wildCards = readSet(meta.wildCards());
+
     }
 
     private String readStr(String s) {
