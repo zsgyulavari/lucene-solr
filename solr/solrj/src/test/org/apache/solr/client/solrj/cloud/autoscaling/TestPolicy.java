@@ -246,8 +246,8 @@ public class TestPolicy extends SolrTestCaseJ4 {
 
     Map policies = (Map) Utils.fromJSONString("{" +
         "  'cluster-preferences': [" +
-        "    { 'maximize': 'freedisk', 'precision': 50}," +
-        "    { 'minimize': 'cores'}" +
+        "    { 'minimize': 'cores'}," +
+        "    { 'maximize': 'freedisk', 'precision': 50}" +
         "  ]," +
         "  'cluster-policy': [" +
         "    { 'replica': 0, 'nodeRole': 'overseer'}" +
@@ -280,6 +280,8 @@ public class TestPolicy extends SolrTestCaseJ4 {
     assertNotNull(op);
     nodes.add(op.getParams().get("node"));
     assertEquals(2, nodes.size());
+    assertTrue("node1 should have been selected by add replica", nodes.contains("node1"));
+    assertTrue("node2 should have been selected by add replica", nodes.contains("node2"));
 
     session = suggester.getSession();
     suggester = session.getSuggester(MOVEREPLICA);
