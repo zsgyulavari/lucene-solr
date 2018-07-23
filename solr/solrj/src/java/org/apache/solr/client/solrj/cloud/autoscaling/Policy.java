@@ -615,4 +615,15 @@ public class Policy implements MapWriter {
       throw new RuntimeException("NO such node found " + node);
     }
   }
+  static final Map<String, Suggestion.ConditionType> validatetypes = new HashMap<>();
+  static {
+    for (Suggestion.ConditionType t : Suggestion.ConditionType.values())
+      validatetypes.put(t.tagName, t);
+  }
+  public static ConditionType getTagType(String name) {
+    ConditionType info = validatetypes.get(name);
+    if (info == null && name.startsWith(ImplicitSnitch.SYSPROP)) info = ConditionType.STRING;
+    if (info == null && name.startsWith(Clause.METRICS_PREFIX)) info = ConditionType.LAZY;
+    return info;
+  }
 }

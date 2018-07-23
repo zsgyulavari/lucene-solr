@@ -25,7 +25,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -54,7 +53,7 @@ import static org.apache.solr.common.params.CollectionParams.CollectionAction.MO
 public class Suggestion {
   public static final String coreidxsize = "INDEX.sizeInGB";
 
-  static final Map<String, ConditionType> validatetypes = new HashMap<>();
+
   private static final String NULL = "";
 
   @Target(ElementType.FIELD)
@@ -88,10 +87,7 @@ public class Suggestion {
   }
 
   public static ConditionType getTagType(String name) {
-    ConditionType info = validatetypes.get(name);
-    if (info == null && name.startsWith(ImplicitSnitch.SYSPROP)) info = ConditionType.STRING;
-    if (info == null && name.startsWith(Clause.METRICS_PREFIX)) info = ConditionType.LAZY;
-    return info;
+    return Policy.getTagType(name);
   }
 
   private static Object getOperandAdjustedValue(Object val, Object original) {
@@ -628,29 +624,35 @@ public class Suggestion {
 
     ConditionType() {
       try {
-        meta = ConditionType.class.getField(name()).getAnnotation(Meta.class);
-        if (meta == null) {
-          throw new RuntimeException("Invalid type, should have a @Meta annotation " + name());
+        try {
+          meta = ConditionType.class.getField(name()).getAnnotation(Meta.class);
+          if (meta == null) {
+            throw new RuntimeException("Invalid type, should have a @Meta annotation " + name());
+          }
+        } catch (NoSuchFieldException e) {
+          //cannot happen
         }
-      } catch (NoSuchFieldException e) {
-        //cannot happen
-      }
-      this.tagName = meta.name();
-      this.type = meta.type();
+        this.tagName = meta.name();
+        this.type = meta.type();
 
-      this.vals = readSet(meta.enumVals());
-      this.max = readNum(meta.max());
-      this.min = readNum(meta.min());
-      this.perReplicaValue = readStr(meta.associatedPerReplicaValue());
-      this.associatedPerNodeValues = readSet(meta.associatedPerNodeValue());
-      this.additive = meta.isAdditive();
-      this.metricsAttribute = readStr(meta.metricsKey());
-      this.isPerNodeValue = meta.isNodeSpecificVal();
-      this.supportedComputedTypes = meta.computedValues()[0] == ComputedType.NULL ?
-          emptySet() :
-          unmodifiableSet(new HashSet(Arrays.asList(meta.computedValues())));
-      this.isHidden = meta.isHidden();
-      this.wildCards = readSet(meta.wildCards());
+        this.vals = readSet(meta.enumVals());
+        this.max = readNum(meta.max());
+        this.min = readNum(meta.min());
+        this.perReplicaValue = readStr(meta.associatedPerReplicaValue());
+        this.associatedPerNodeValues = readSet(meta.associatedPerNodeValue());
+        this.additive = meta.isAdditive();
+        this.metricsAttribute = readStr(meta.metricsKey());
+        this.isPerNodeValue = meta.isNodeSpecificVal();
+        this.supportedComputedTypes = meta.computedValues()[0] == ComputedType.NULL ?
+            emptySet() :
+            unmodifiableSet(new HashSet(Arrays.asList(meta.computedValues())));
+        this.isHidden = meta.isHidden();
+        this.wildCards = readSet(meta.wildCards());
+      } catch (RuntimeException e) {
+        System.out.println("%%%%%%%%ERROR");
+        e.printStackTrace();
+        throw e;
+      }
     }
 
     private String readStr(String s) {
@@ -833,9 +835,5 @@ public class Suggestion {
   /*public static final Map<String, String> tagVsPerReplicaVal = Stream.of(ConditionType.values())
       .filter(tag -> tag.perReplicaValue != null)
       .collect(Collectors.toMap(tag -> tag.tagName, tag -> tag.perReplicaValue));*/
-  static {
-    for (Suggestion.ConditionType t : Suggestion.ConditionType.values()) Suggestion.validatetypes.put(t.tagName, t);
-  }
-
 
 }
