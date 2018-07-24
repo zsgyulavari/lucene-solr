@@ -42,6 +42,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import org.apache.solr.client.solrj.cloud.autoscaling.AutoScalingConfig;
 import org.apache.solr.client.solrj.cloud.DistribStateManager;
+import org.apache.solr.client.solrj.cloud.autoscaling.Policy;
 import org.apache.solr.client.solrj.cloud.autoscaling.PolicyHelper;
 import org.apache.solr.client.solrj.cloud.autoscaling.ReplicaInfo;
 import org.apache.solr.client.solrj.cloud.autoscaling.Suggestion;
@@ -680,8 +681,18 @@ public class SimClusterStateProvider implements ClusterStateProvider {
     }
     boolean waitForFinalState = props.getBool(CommonAdminParams.WAIT_FOR_FINAL_STATE, false);
     List<String> nodeList = new ArrayList<>();
-    List<String> shardNames = new ArrayList<>();
     final String collectionName = props.getStr(NAME);
+
+    String router = props.getStr("router.name", DocRouter.DEFAULT_NAME);
+    String policy = props.getStr(Policy.POLICY);
+    AutoScalingConfig autoScalingConfig = cloudManager.getDistribStateManager().getAutoScalingConfig();
+    boolean usePolicyFramework = !autoScalingConfig.getPolicy().getClusterPolicy().isEmpty() || policy != null;
+
+    // fail fast if parameters are wrong or incomplete
+    List<String> shardNames = CreateCollectionCmd.populateShardNames(props, router);
+    CreateCollectionCmd.checkMaxShardsPerNode(props, usePolicyFramework);
+    CreateCollectionCmd.checkReplicaTypes(props);
+
     // always force getting fresh state
     collectionsStatesRef.set(null);
     ClusterState clusterState = getClusterState();

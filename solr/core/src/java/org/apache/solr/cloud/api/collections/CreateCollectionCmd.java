@@ -377,7 +377,7 @@ public class CreateCollectionCmd implements OverseerCollectionMessageHandler.Cmd
     return replicaPositions;
   }
 
-  private static int checkMaxShardsPerNode(ZkNodeProps message, boolean usePolicyFramework) {
+  public static int checkMaxShardsPerNode(ZkNodeProps message, boolean usePolicyFramework) {
     int maxShardsPerNode = message.getInt(MAX_SHARDS_PER_NODE, 1);
     if (usePolicyFramework && message.getStr(MAX_SHARDS_PER_NODE) != null && maxShardsPerNode > 0) {
       throw new SolrException(ErrorCode.BAD_REQUEST, "'maxShardsPerNode>0' is not supported when autoScaling policies are used");
@@ -387,7 +387,7 @@ public class CreateCollectionCmd implements OverseerCollectionMessageHandler.Cmd
     return maxShardsPerNode;
   }
 
-  private static void checkReplicaTypes(ZkNodeProps message) {
+  public static void checkReplicaTypes(ZkNodeProps message) {
     int numTlogReplicas = message.getInt(TLOG_REPLICAS, 0);
     int numNrtReplicas = message.getInt(NRT_REPLICAS, message.getInt(REPLICATION_FACTOR, numTlogReplicas > 0 ? 0 : 1));
 
@@ -396,7 +396,7 @@ public class CreateCollectionCmd implements OverseerCollectionMessageHandler.Cmd
     }
   }
 
-  private static List<String> populateShardNames(ZkNodeProps message, String router) {
+  public static List<String> populateShardNames(ZkNodeProps message, String router) {
     List<String> shardNames = new ArrayList<>();
     Integer numSlices = message.getInt(OverseerCollectionMessageHandler.NUM_SLICES, null);
     if (ImplicitDocRouter.NAME.equals(router)) {
