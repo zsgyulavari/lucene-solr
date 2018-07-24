@@ -41,46 +41,44 @@ class AddReplicaSuggester extends Suggester {
     Set<Pair<String, String>> s = (Set<Pair<String, String>>) hints.getOrDefault(Hint.COLL_SHARD, Collections.emptySet());
 
     String withCollection = findWithCollection(collections, s);
-    //if withCollection is present, try to allocate replicas to nodes which already have the withCollection replicas and
-    // that do not have  any violations
+
+    // If withCollection is present, try to allocate replicas to nodes which already have the withCollection
+    // replicas and do not have  any violations
     Collection originalTargetNodesCopy = setupWithCollectionTargetNodes(collections, s, withCollection);
 
     log.debug("Generating suggestions with hints: {}", hints);
 
     SolrRequest operation = tryEachNode(true);
-    if (operation == null && withCollection != null)  {
+    if (operation == null && withCollection != null) {
       // it was not possible to place the replica in nodes which already have that withCollection.
-      //try to place the replica in any node. This may add replica of withCollection to that node (if not present)
-      // restore original target nodes and try again
-      if (originalTargetNodesCopy != null)  {
+      // try to place the replica in any node. This may add replica of withCollection to that node (if not present)
+      // to do that, we must restore original target nodes and try again
+      if (originalTargetNodesCopy != null) {
         hints.put(Hint.TARGET_NODE, originalTargetNodesCopy);
-      } else  {
+      } else {
         hints.remove(Hint.TARGET_NODE);
       }
 
       operation = tryEachNode(true);
-      //we still can't get a valid node
-      if (operation == null)  {
+      // we still can't get a valid node
+      if (operation == null) {
         for (Row row : getMatrix()) {
           row.forEachReplica(r -> {
-            if(withCollection.equals(r.getCollection()))
+            if (withCollection.equals(r.getCollection()))
               hint(Hint.TARGET_NODE, row.node);
           });
         }
-    /*    getMatrix().stream()
-            .filter(row -> row.collectionVsShardVsReplicas.containsKey(withCollection))
-            .forEach(row -> hint(Hint.TARGET_NODE, row.node));*/
 
         // previously, we tried to allocate replicas without ignoring the non strict rules
         // (but they have the withCollection replicas)
-        //now we are going to try by ignoring the no strict rules
+        // now we are going to try by ignoring the no strict rules
         operation = tryEachNode(false);
-        if (operation == null)  {
+        if (operation == null) {
           // we still can't get a node where we can place a replica
           // restore original target nodes and try again
-          if (originalTargetNodesCopy != null)  {
+          if (originalTargetNodesCopy != null) {
             hints.put(Hint.TARGET_NODE, originalTargetNodesCopy);
-          } else  {
+          } else {
             hints.remove(Hint.TARGET_NODE);
           }
           operation = tryEachNode(false);
