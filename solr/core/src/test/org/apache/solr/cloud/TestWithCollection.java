@@ -19,13 +19,13 @@ package org.apache.solr.cloud;
 
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-import com.google.common.base.Charsets;
 import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.cloud.SolrCloudManager;
@@ -76,7 +76,7 @@ public class TestWithCollection extends SolrCloudTestCase {
   public void setUp() throws Exception {
     super.setUp();
     if (zkClient().exists(ZkStateReader.SOLR_AUTOSCALING_CONF_PATH, true))  {
-      zkClient().setData(ZkStateReader.SOLR_AUTOSCALING_CONF_PATH, "{}".getBytes(Charsets.UTF_8), true);
+      zkClient().setData(ZkStateReader.SOLR_AUTOSCALING_CONF_PATH, "{}".getBytes(StandardCharsets.UTF_8), true);
     }
     ClusterState clusterState = cluster.getSolrClient().getZkStateReader().getClusterState();
     for (Map.Entry<String, ClusterState.CollectionRef> entry : clusterState.getCollectionStates().entrySet()) {
