@@ -23,11 +23,9 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -38,7 +36,6 @@ import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.V2RequestSupport;
 import org.apache.solr.client.solrj.cloud.autoscaling.Clause.ComputedType;
 import org.apache.solr.client.solrj.cloud.autoscaling.Violation.ReplicaInfoAndErr;
-import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.cloud.rule.ImplicitSnitch;
 import org.apache.solr.common.util.Pair;
 import org.apache.solr.common.util.StrUtils;
@@ -47,7 +44,6 @@ import static java.util.Collections.emptySet;
 import static java.util.Collections.unmodifiableSet;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Clause.parseString;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Policy.ANY;
-import static org.apache.solr.common.params.CollectionParams.CollectionAction.ADDREPLICA;
 import static org.apache.solr.common.params.CollectionParams.CollectionAction.MOVEREPLICA;
 
 public class Suggestion {
@@ -82,6 +78,8 @@ public class Suggestion {
     double max() default -1d;
 
     String metricsKey() default NULL;
+
+    Class implementation() default void.class;
 
     ComputedType[] computedValues() default ComputedType.NULL;
   }
@@ -158,7 +156,9 @@ public class Suggestion {
   /**
    * Type details of each variable in policies
    */
-  public enum ConditionType {
+  public enum ConditionType implements VarType {
+    @Meta(name = "withCollection", type = String.class, isNodeSpecificVal = true, implementation = WithCollectionVarType.class)
+    WITH_COLLECTION(),
 
     @Meta(name = "collection",
         type = String.class)
@@ -489,7 +489,7 @@ public class Suggestion {
       }
 
       @Override
-      boolean match(Object inputVal, Operand op, Object val, String name, Row row) {
+      public boolean match(Object inputVal, Operand op, Object val, String name, Row row) {
         return op.match(parseString(val), parseString(inputVal)) == Clause.TestStatus.PASS;
       }
 
@@ -509,105 +509,6 @@ public class Suggestion {
       }
 
 
-    },
-
-    @Meta(name = "withCollection", type = String.class, isNodeSpecificVal = true)
-    WITH_COLLECTION() {
-      @Override
-      boolean match(Object inputVal, Operand op, Object val, String name, Row row) {
-        Map<String, String> withCollectionMap = (Map<String, String>) inputVal;
-        if (withCollectionMap == null || withCollectionMap.isEmpty()) return true;
-
-        Set<String> uniqueColls = new HashSet<>();
-        row.forEachReplica(replicaInfo -> uniqueColls.add(replicaInfo.getCollection()));
-
-        for (Map.Entry<String, String> e : withCollectionMap.entrySet()) {
-          if (uniqueColls.contains(e.getKey()) && !uniqueColls.contains(e.getValue())) return false;
-        }
-
-        return true;
-      }
-
-      @Override
-      public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector, boolean strictMode) {
-        if (strictMode) {
-          // we do not want to add a replica of the 'withCollection' in strict mode
-          return;
-        }
-
-        Map<String, String> withCollectionMap = (Map<String, String>) cell.val;
-        if (withCollectionMap == null || withCollectionMap.isEmpty()) return;
-
-        Set<String> uniqueColls = new HashSet<>();
-        Row row = cell.row;
-        row.forEachReplica(replicaInfo -> uniqueColls.add(replicaInfo.getCollection()));
-
-        for (Map.Entry<String, String> e : withCollectionMap.entrySet()) {
-          if (uniqueColls.contains(e.getKey()) && !uniqueColls.contains(e.getValue()))  {
-            String withCollection = e.getValue();
-
-            opCollector.accept(new Row.OperationInfo(withCollection, "shard1", row.node, cell.name, true, Replica.Type.NRT));
-          }
-        }
-      }
-
-      /**
-       * We must find the replicas of the violating collection (shard does not matter)
-       * on the violating node and add them to the violation using {@link Violation#addReplica(ReplicaInfoAndErr)}
-       */
-      @Override
-      public void addViolatingReplicas(ViolationCtx ctx) {
-        String node = ctx.currentViolation.node;
-        for (Row row : ctx.allRows) {
-          if (node.equals(row.node))  {
-            Map<String, String> withCollectionMap = (Map<String, String>) row.getVal(WITH_COLLECTION.tagName);
-            if (withCollectionMap != null)  {
-              row.forEachReplica(r -> {
-                String withCollection = withCollectionMap.get(r.getCollection());
-                if (withCollection != null) {
-                  // test whether this row has at least 1 replica of withCollection, else there is a violation
-                  Set<String> uniqueCollections = new HashSet<>();
-                  row.forEachReplica(replicaInfo -> uniqueCollections.add(replicaInfo.getCollection()));
-                  if (!uniqueCollections.contains(withCollection))  {
-                    ctx.currentViolation.addReplica(new ReplicaInfoAndErr(r).withDelta(1.0d));
-                  }
-                }
-              });
-              ctx.currentViolation.replicaCountDelta = (double) ctx.currentViolation.getViolatingReplicas().size();
-            }
-          }
-        }
-      }
-
-      @Override
-      public int compareViolation(Violation v1, Violation v2) {
-        return Integer.compare(v1.getViolatingReplicas().size(), v2.getViolatingReplicas().size());
-      }
-
-      @Override
-      public void getSuggestions(SuggestionCtx ctx) {
-        if (ctx.violation.getViolatingReplicas().isEmpty())  return;
-
-        Map<String, Object> nodeValues = ctx.session.nodeStateProvider.getNodeValues(ctx.violation.node, Collections.singleton(WITH_COLLECTION.tagName));
-        Map<String, String> withCollectionsMap = (Map<String, String>) nodeValues.get(WITH_COLLECTION.tagName);
-        if (withCollectionsMap == null) return;
-
-        Set<String> uniqueCollections = new HashSet<>();
-        for (ReplicaInfoAndErr replicaInfoAndErr : ctx.violation.getViolatingReplicas()) {
-          uniqueCollections.add(replicaInfoAndErr.replicaInfo.getCollection());
-        }
-
-        for (String collection : uniqueCollections) {
-          String withCollection = withCollectionsMap.get(collection);
-          if (withCollection == null) continue;
-
-          Suggester suggester = ctx.session.getSuggester(ADDREPLICA)
-              .forceOperation(true)
-              .hint(Suggester.Hint.COLL_SHARD, new Pair<>(withCollection, "shard1"))
-              .hint(Suggester.Hint.TARGET_NODE, ctx.violation.node);
-          ctx.addSuggestion(suggester);
-        }
-      }
     };
 
     public final String tagName;
@@ -625,6 +526,7 @@ public class Suggestion {
     public final String metricsAttribute;
     public final boolean isPerNodeValue;
     public final Set<ComputedType> supportedComputedTypes;
+    private final VarType impl;
 
 
     ConditionType() {
@@ -635,6 +537,15 @@ public class Suggestion {
         }
       } catch (NoSuchFieldException e) {
         //cannot happen
+      }
+      if (meta.implementation() != void.class) {
+        try {
+          impl = (VarType) meta.implementation().newInstance();
+        } catch (Exception e) {
+          throw new RuntimeException("Unable to instantiate: " + meta.implementation().getName());
+        }
+      } else {
+        impl = null;
       }
       this.tagName = meta.name();
       this.type = meta.type();
@@ -669,11 +580,21 @@ public class Suggestion {
       return unmodifiableSet(new HashSet<>(Arrays.asList(vals)));
     }
 
+    @Override
     public void getSuggestions(SuggestionCtx ctx) {
+      if (impl != null) {
+        impl.getSuggestions(ctx);
+        return;
+      }
       perNodeSuggestions(ctx);
     }
 
+    @Override
     public void addViolatingReplicas(ViolationCtx ctx) {
+      if (impl != null) {
+        impl.addViolatingReplicas(ctx);
+        return;
+      }
       for (Row row : ctx.allRows) {
         if (ctx.clause.tag.varType.isPerNodeValue && !row.node.equals(ctx.tagKey)) continue;
         collectViolatingReplicas(ctx, row);
@@ -736,24 +657,33 @@ public class Suggestion {
      * Simulate a replica addition to a node in the cluster
      */
     public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector, boolean strictMode) {
+      if (impl != null) impl.projectAddReplica(cell, ri, opCollector, strictMode);
     }
 
     public void projectRemoveReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector) {
+      if (impl != null) {
+        impl.projectRemoveReplica(cell, ri, opCollector);
+      }
     }
 
+    @Override
     public int compareViolation(Violation v1, Violation v2) {
+      if (impl != null) return impl.compareViolation(v1, v2);
       if (v2.replicaCountDelta == null || v1.replicaCountDelta == null) return 0;
       if (Math.abs(v1.replicaCountDelta) == Math.abs(v2.replicaCountDelta)) return 0;
       return Math.abs(v1.replicaCountDelta) < Math.abs(v2.replicaCountDelta) ? -1 : 1;
     }
 
+    @Override
     public Object computeValue(Policy.Session session, Clause.Condition condition, String collection, String shard, String node) {
+      if (impl != null) return impl.computeValue(session, condition, collection, shard, node);
       return condition.val;
     }
 
-    boolean match(Object inputVal, Operand op, Object val, String name, Row row) {
+    @Override
+    public boolean match(Object inputVal, Operand op, Object val, String name, Row row) {
+      if (impl != null) return impl.match(inputVal, op, val, name, row);
       return op.match(val, validate(name, inputVal, false)) == Clause.TestStatus.PASS;
-
     }
   }
 
