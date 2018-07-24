@@ -328,7 +328,7 @@ public class DocCollection extends ZkNodeProps implements Iterable<Slice> {
 
   /**
    * @param predicate test against shardName vs. replica
-   * @return
+   * @return the first replica that matches the predicate
    */
   public Replica getReplica(BiPredicate<String, Replica> predicate) {
     final Replica[] result = new Replica[1];
