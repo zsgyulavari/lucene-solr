@@ -116,7 +116,11 @@ public class Row implements MapWriter {
   }
 
   public Row addReplica(String coll, String shard, Replica.Type type) {
-    return addReplica(coll, shard, type, 0);
+    return addReplica(coll, shard, type, 0, true);
+  }
+
+  public Row addReplica(String coll, String shard, Replica.Type type, boolean strictMode) {
+    return addReplica(coll, shard, type, 0, strictMode);
   }
 
   /**
@@ -127,12 +131,13 @@ public class Row implements MapWriter {
    * @param coll  collection name
    * @param shard shard name
    * @param type  replica type
+   * @param recursionCount the number of times we have recursed to add more replicas
+   * @param strictMode whether suggester is operating in strict mode or not
    */
-  Row addReplica(String coll, String shard, Replica.Type type, int recursionCount) {
+  Row addReplica(String coll, String shard, Replica.Type type, int recursionCount, boolean strictMode) {
     if (recursionCount > 3) {
       log.error("more than 3 levels of recursion ", new RuntimeException());
       return this;
-
     }
     List<OperationInfo> furtherOps = new LinkedList<>();
     Consumer<OperationInfo> opCollector = it -> furtherOps.add(it);
@@ -146,11 +151,11 @@ public class Row implements MapWriter {
         Utils.makeMap(ZkStateReader.REPLICA_TYPE, type != null ? type.toString() : Replica.Type.NRT.toString()));
     replicas.add(ri);
     for (Cell cell : row.cells) {
-      cell.type.projectAddReplica(cell, ri, opCollector);
+      cell.type.projectAddReplica(cell, ri, opCollector, strictMode);
     }
     for (OperationInfo op : furtherOps) {
       if (op.isAdd) {
-        row = row.session.getNode(op.node).addReplica(op.coll, op.shard, op.type, recursionCount + 1);
+        row = row.session.getNode(op.node).addReplica(op.coll, op.shard, op.type, recursionCount + 1, strictMode);
       } else {
         row.session.getNode(op.node).removeReplica(op.coll, op.shard, op.type, recursionCount+1);
       }

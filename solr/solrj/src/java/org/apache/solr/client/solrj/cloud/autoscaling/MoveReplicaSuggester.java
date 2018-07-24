@@ -60,10 +60,10 @@ public class MoveReplicaSuggester extends Suggester {
         targetRow = session.matrix.get(j);
         if (targetRow.node.equals(fromRow.node)) continue;
         if (!isNodeSuitableForReplicaAddition(targetRow)) continue;
-        targetRow = targetRow.addReplica(ri.getCollection(), ri.getShard(), ri.getType());//add replica to target first
+        targetRow = targetRow.addReplica(ri.getCollection(), ri.getShard(), ri.getType(), strict); // add replica to target first
         Row srcRowModified = targetRow.session.getNode(fromRow.node).removeReplica(ri.getCollection(), ri.getShard(), ri.getType());//then remove replica from source node
         List<Violation> errs = testChangedMatrix(strict, srcRowModified.session);
-        srcRowModified.session.applyRules();// now resort the nodes with the new values
+        srcRowModified.session.applyRules(); // now resort the nodes with the new values
         Policy.Session tmpSession = srcRowModified.session;
 
         if (!containsNewErrors(errs) &&

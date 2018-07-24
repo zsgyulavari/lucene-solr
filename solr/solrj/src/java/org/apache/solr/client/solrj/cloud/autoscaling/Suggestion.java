@@ -338,7 +338,7 @@ public class Suggestion {
 
       //When a replica is added, freedisk should be incremented
       @Override
-      public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> ops) {
+      public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> ops, boolean strictMode) {
         //go through other replicas of this shard and copy the index size value into this
         for (Row row : cell.getRow().session.matrix) {
           row.forEachReplica(replicaInfo -> {
@@ -427,7 +427,7 @@ public class Suggestion {
       }
 
       @Override
-      public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> ops) {
+      public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> ops, boolean strictMode) {
         cell.val = cell.val == null ? 0 : ((Number) cell.val).longValue() + 1;
       }
 
@@ -529,7 +529,12 @@ public class Suggestion {
       }
 
       @Override
-      public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector) {
+      public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector, boolean strictMode) {
+        if (strictMode) {
+          // we do not want to add a replica of the 'withCollection' in strict mode
+          return;
+        }
+
         Map<String, String> withCollectionMap = (Map<String, String>) cell.val;
         if (withCollectionMap == null || withCollectionMap.isEmpty()) return;
 
@@ -730,7 +735,7 @@ public class Suggestion {
     /**
      * Simulate a replica addition to a node in the cluster
      */
-    public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector) {
+    public void projectAddReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector, boolean strictMode) {
     }
 
     public void projectRemoveReplica(Cell cell, ReplicaInfo ri, Consumer<Row.OperationInfo> opCollector) {
