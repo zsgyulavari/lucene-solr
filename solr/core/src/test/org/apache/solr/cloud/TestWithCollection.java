@@ -514,18 +514,91 @@ public class TestWithCollection extends SolrCloudTestCase {
     assertEquals(1, replicas.size());
   }
 
+  public void testMultipleWithCollections() throws Exception {
+    String prefix = "testMultipleWithCollections";
+    String xyz = prefix + "_xyz";
+    String xyz2 = prefix + "_xyz2";
+    String abc = prefix + "_abc";
+    String abc2 = prefix + "_abc2";
+
+    // start 2 more nodes so we have 4 in total
+    cluster.startJettySolrRunner();
+    cluster.startJettySolrRunner();
+    cluster.waitForAllNodes(30);
+
+    CloudSolrClient solrClient = cluster.getSolrClient();
+
+    String setClusterPolicyCommand = "{" +
+        " 'set-cluster-policy': [" +
+        "      {'cores':'<10', 'node':'#ANY'}," +
+        "      {'replica':'<2', 'node':'#ANY'}," +
+        "    ]" +
+        "}";
+    SolrRequest req = createAutoScalingRequest(SolrRequest.METHOD.POST, setClusterPolicyCommand);
+    solrClient.request(req);
+
+    String chosenNode = cluster.getJettySolrRunner(0).getNodeName();
+    log.info("Chosen node {} for collection {}", chosenNode, abc);
+
+    CollectionAdminRequest.createCollection(abc, 1, 1)
+        .setCreateNodeSet(chosenNode)
+        .process(solrClient);
+    CollectionAdminRequest.createCollection(xyz, 1, 1)
+        .setWithCollection(abc)
+        .process(solrClient);
+
+    String chosenNode2 = cluster.getJettySolrRunner(1).getNodeName();
+    log.info("Chosen node {} for collection {}", chosenNode2, abc2);
+    CollectionAdminRequest.createCollection(abc2, 1, 1)
+        .setCreateNodeSet(chosenNode2)
+        .process(solrClient);
+    CollectionAdminRequest.createCollection(xyz2, 1, 1)
+        .setWithCollection(abc2)
+        .process(solrClient);
+
+    // refresh
+    DocCollection collection = solrClient.getZkStateReader().getClusterState().getCollection(xyz);
+    DocCollection collection2 = solrClient.getZkStateReader().getClusterState().getCollection(xyz2);
+    DocCollection withCollection = solrClient.getZkStateReader().getClusterState().getCollection(abc);
+    DocCollection withCollection2 = solrClient.getZkStateReader().getClusterState().getCollection(abc2);
+
+    // sanity check
+    assertColocated(collection, chosenNode2, withCollection); // no replica should be on chosenNode2
+    assertColocated(collection2, chosenNode, withCollection2); // no replica should be on chosenNode
+
+    String chosenNode3 = cluster.getJettySolrRunner(2).getNodeName();
+    CollectionAdminRequest.addReplicaToShard(xyz, "shard1")
+        .setNode(chosenNode3)
+        .process(solrClient);
+    String chosenNode4 = cluster.getJettySolrRunner(2).getNodeName();
+    CollectionAdminRequest.addReplicaToShard(xyz2, "shard1")
+        .setNode(chosenNode4)
+        .process(solrClient);
+
+    collection = solrClient.getZkStateReader().getClusterState().getCollection(xyz);
+    collection2 = solrClient.getZkStateReader().getClusterState().getCollection(xyz2);
+    withCollection = solrClient.getZkStateReader().getClusterState().getCollection(abc);
+    withCollection2 = solrClient.getZkStateReader().getClusterState().getCollection(abc2);
+
+    // sanity check
+    assertColocated(collection, null, withCollection);
+    assertColocated(collection2, null, withCollection2);
+  }
+
   /**
-   * Asserts that all replicas of collection on the given node are colocated with at least one
-   * replica of the withCollection.
+   * Asserts that all replicas of collection are colocated with at least one
+   * replica of the withCollection and none of them should be on the given 'noneOnNode'.
    */
-  private void assertColocated(DocCollection collection, String node, DocCollection withCollection) {
+  private void assertColocated(DocCollection collection, String noneOnNode, DocCollection withCollection) {
     // sanity check
     assertTrue(collection.getReplicas().stream().noneMatch(
         replica -> withCollection.getReplicas(replica.getNodeName()) == null
             || withCollection.getReplicas(replica.getNodeName()).isEmpty()));
 
-    assertTrue(collection.getReplicas().stream().noneMatch(
-        replica -> node.equals(replica.getNodeName())));
+    if (noneOnNode != null) {
+      assertTrue(collection.getReplicas().stream().noneMatch(
+          replica -> noneOnNode.equals(replica.getNodeName())));
+    }
   }
 
   private static CountDownLatch LATCH = new CountDownLatch(1);
