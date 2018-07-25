@@ -96,6 +96,7 @@ public class TestWithCollection extends SolrCloudTestCase {
     deleteChildrenRecursively(ZkStateReader.SOLR_AUTOSCALING_TRIGGER_STATE_PATH);
     deleteChildrenRecursively(ZkStateReader.SOLR_AUTOSCALING_NODE_LOST_PATH);
     deleteChildrenRecursively(ZkStateReader.SOLR_AUTOSCALING_NODE_ADDED_PATH);
+    LATCH = new CountDownLatch(1);
   }
 
   private void deleteChildrenRecursively(String path) throws Exception {
