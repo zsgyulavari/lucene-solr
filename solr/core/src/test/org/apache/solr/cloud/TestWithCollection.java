@@ -65,9 +65,11 @@ public class TestWithCollection extends SolrCloudTestCase {
 
   private static SolrCloudManager cloudManager;
 
+  private static final int NUM_JETTIES = 2;
+
   @BeforeClass
   public static void setupCluster() throws Exception {
-    configureCluster(2)
+    configureCluster(NUM_JETTIES)
         .addConfig("conf", configset("cloud-minimal"))
         .configure();
   }
@@ -97,6 +99,17 @@ public class TestWithCollection extends SolrCloudTestCase {
     deleteChildrenRecursively(ZkStateReader.SOLR_AUTOSCALING_NODE_LOST_PATH);
     deleteChildrenRecursively(ZkStateReader.SOLR_AUTOSCALING_NODE_ADDED_PATH);
     LATCH = new CountDownLatch(1);
+
+    int jettys = cluster.getJettySolrRunners().size();
+    if (jettys < NUM_JETTIES) {
+      for (int i = jettys; i < NUM_JETTIES; i++) {
+        cluster.startJettySolrRunner();
+      }
+    } else  {
+      for (int i = jettys; i > NUM_JETTIES; i--) {
+        cluster.stopJettySolrRunner(i - 1);
+      }
+    }
   }
 
   private void deleteChildrenRecursively(String path) throws Exception {
