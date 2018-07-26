@@ -114,8 +114,7 @@ If `true`, the request will complete only when all affected replicas become acti
 
 `withCollection`::
 The name of the collection with which all replicas of this collection must be co-located. The collection must already exist and must have a single shard named `shard1`.
-Solr will guarantee that a node having one or more replicas of the collection being created will always host a replica of the `withCollection`. If enough replicas of the `withCollection` do not already exist then new replicas of `NRT` type will be automatically created.
-This invariant will be maintained during any future collection operations such as adding replicas, moving replicas or splitting shards either via API or by Solr's Autoscaling feature.
+See <<colocating-collections.adoc#colocating-collections, Colocating collections>> for more details.
 
 
 === CREATE Response
