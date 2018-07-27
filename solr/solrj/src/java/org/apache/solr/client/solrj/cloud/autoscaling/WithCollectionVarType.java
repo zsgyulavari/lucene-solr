@@ -113,13 +113,13 @@ public class WithCollectionVarType implements VarType {
       uniqueCollections.add(replicaInfoAndErr.replicaInfo.getCollection());
     }
 
+    collectionLoop:
     for (String collection : uniqueCollections) {
       String withCollection = withCollectionsMap.get(collection);
       if (withCollection == null) continue;
 
       // can we find a node from which we can move a replica of the `withCollection`
       // without creating another violation?
-      Set<String> sourceNodes = new HashSet<>();
       for (Row row : ctx.session.matrix) {
         if (ctx.violation.node.equals(row.node))  continue; // filter the violating node
 
@@ -127,7 +127,7 @@ public class WithCollectionVarType implements VarType {
         row.forEachReplica(replicaInfo -> hostedCollections.add(replicaInfo.getCollection()));
 
         if (hostedCollections.contains(withCollection) && !hostedCollections.contains(collection))  {
-          // find the replica we can move
+          // find the candidate replicas that we can move
           List<ReplicaInfo> movableReplicas = new ArrayList<>();
           row.forEachReplica(replicaInfo -> {
             if (replicaInfo.getCollection().equals(withCollection)) {
@@ -135,18 +135,17 @@ public class WithCollectionVarType implements VarType {
             }
           });
 
-          if (movableReplicas.isEmpty())  continue;
-          ReplicaInfo toMove = movableReplicas.get(0);
-
-          // candidate source node for a move replica operation
-          Suggester suggester = ctx.session.getSuggester(MOVEREPLICA)
-              .forceOperation(true)
-              .hint(Suggester.Hint.COLL_SHARD, new Pair<>(withCollection, "shard1"))
-              .hint(Suggester.Hint.SRC_NODE, row.node)
-              .hint(Suggester.Hint.REPLICA, toMove.getName())
-              .hint(Suggester.Hint.TARGET_NODE, ctx.violation.node);
-          ctx.addSuggestion(suggester);
-          return; // one is enough
+          for (ReplicaInfo toMove : movableReplicas) {
+            // candidate source node for a move replica operation
+            Suggester suggester = ctx.session.getSuggester(MOVEREPLICA)
+                .forceOperation(true)
+                .hint(Suggester.Hint.COLL_SHARD, new Pair<>(withCollection, "shard1"))
+                .hint(Suggester.Hint.SRC_NODE, row.node)
+                .hint(Suggester.Hint.REPLICA, toMove.getName())
+                .hint(Suggester.Hint.TARGET_NODE, ctx.violation.node);
+            if (ctx.addSuggestion(suggester) != null)
+              continue collectionLoop; // one suggestion is enough for this collection
+          }
         }
       }
 
