@@ -17,8 +17,10 @@
 
 package org.apache.solr.client.solrj.cloud.autoscaling;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -27,6 +29,7 @@ import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.util.Pair;
 
 import static org.apache.solr.common.params.CollectionParams.CollectionAction.ADDREPLICA;
+import static org.apache.solr.common.params.CollectionParams.CollectionAction.MOVEREPLICA;
 
 /**
  * Implements the 'withCollection' variable type
@@ -114,6 +117,40 @@ public class WithCollectionVarType implements VarType {
       String withCollection = withCollectionsMap.get(collection);
       if (withCollection == null) continue;
 
+      // can we find a node from which we can move a replica of the `withCollection`
+      // without creating another violation?
+      Set<String> sourceNodes = new HashSet<>();
+      for (Row row : ctx.session.matrix) {
+        if (ctx.violation.node.equals(row.node))  continue; // filter the violating node
+
+        Set<String> hostedCollections = new HashSet<>();
+        row.forEachReplica(replicaInfo -> hostedCollections.add(replicaInfo.getCollection()));
+
+        if (hostedCollections.contains(withCollection) && !hostedCollections.contains(collection))  {
+          // find the replica we can move
+          List<ReplicaInfo> movableReplicas = new ArrayList<>();
+          row.forEachReplica(replicaInfo -> {
+            if (replicaInfo.getCollection().equals(withCollection)) {
+              movableReplicas.add(replicaInfo);
+            }
+          });
+
+          if (movableReplicas.isEmpty())  continue;
+          ReplicaInfo toMove = movableReplicas.get(0);
+
+          // candidate source node for a move replica operation
+          Suggester suggester = ctx.session.getSuggester(MOVEREPLICA)
+              .forceOperation(true)
+              .hint(Suggester.Hint.COLL_SHARD, new Pair<>(withCollection, "shard1"))
+              .hint(Suggester.Hint.SRC_NODE, row.node)
+              .hint(Suggester.Hint.REPLICA, toMove.getName())
+              .hint(Suggester.Hint.TARGET_NODE, ctx.violation.node);
+          ctx.addSuggestion(suggester);
+          return; // one is enough
+        }
+      }
+
+      // we could not find a valid move, so we suggest adding a replica
       Suggester suggester = ctx.session.getSuggester(ADDREPLICA)
           .forceOperation(true)
           .hint(Suggester.Hint.COLL_SHARD, new Pair<>(withCollection, "shard1"))
