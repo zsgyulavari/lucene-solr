@@ -37,9 +37,10 @@ replica of the `tech_categories` collection.
 
 == Colocating existing collections
 When collections already exist beforehand, the <<collections-api.adoc#modifycollection, Modify Collection API>> can be
-used to set the `withCollection` parameter so that the two collections can be linked. This will immediately trigger
-changes to the cluster and add or move replicas of both collections around until they are co-located together or else
-the API will return a failure messsage.
+used to set the `withCollection` parameter so that the two collections can be linked. This will *not* trigger
+changes to the cluster automatically because moving a large number of replicas immediately might de-stabilize the system.
+Instead, it is recommended that the Suggestions UI page should be consulted on the operations that can be performed
+to change the cluster manually.
 
 Example:
 `/admin/collections?action=MODIFYCOLLECTION&collection=techproducts&withCollection=tech_categories`
