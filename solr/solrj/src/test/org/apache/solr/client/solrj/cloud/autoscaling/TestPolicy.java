@@ -228,10 +228,10 @@ public class TestPolicy extends SolrTestCaseJ4 {
       }
 
       @Override
-      protected Map<String, Object> fetchReplicaMetrics(String solrNode, Map<String, Object> metricsKeyVsTag) {
+      protected Map<String, Object> fetchReplicaMetrics(String solrNode, Map<String, Pair<String, ReplicaInfo>> metricsKeyVsTagReplica) {
         //e.g: solr.core.perReplicaDataColl.shard1.replica_n4:INDEX.sizeInBytes
         Map<String, Object> result = new HashMap<>();
-        metricsKeyVsTag.forEach((k, v) -> {
+        metricsKeyVsTagReplica.forEach((k, v) -> {
           if (k.endsWith(":INDEX.sizeInBytes")) result.put(k, 100);
         });
         return result;
@@ -352,9 +352,10 @@ public class TestPolicy extends SolrTestCaseJ4 {
       }
 
       @Override
-      protected Map<String, Object> fetchReplicaMetrics(String solrNode, Map<String, Object> metricsKeyVsTag) {
+      protected Map<String, Object> fetchReplicaMetrics(String solrNode, Map<String, Pair<String, ReplicaInfo>> metricsKeyVsTagReplica) {
+        //e.g: solr.core.perReplicaDataColl.shard1.replica_n4:INDEX.sizeInBytes
         Map<String, Object> result = new HashMap<>();
-        metricsKeyVsTag.forEach((k, v) -> {
+        metricsKeyVsTagReplica.forEach((k, v) -> {
           if (k.endsWith(":INDEX.sizeInBytes")) result.put(k, 100);
         });
         return result;
@@ -514,9 +515,10 @@ public class TestPolicy extends SolrTestCaseJ4 {
       }
 
       @Override
-      protected Map<String, Object> fetchReplicaMetrics(String solrNode, Map<String, Object> metricsKeyVsTag) {
+      protected Map<String, Object> fetchReplicaMetrics(String solrNode, Map<String, Pair<String, ReplicaInfo>> metricsKeyVsTagReplica) {
+        //e.g: solr.core.perReplicaDataColl.shard1.replica_n4:INDEX.sizeInBytes
         Map<String, Object> result = new HashMap<>();
-        metricsKeyVsTag.forEach((k, v) -> {
+        metricsKeyVsTagReplica.forEach((k, v) -> {
           if (k.endsWith(":INDEX.sizeInBytes")) result.put(k, 100);
         });
         return result;
@@ -666,10 +668,10 @@ public class TestPolicy extends SolrTestCaseJ4 {
       }
 
       @Override
-      protected Map<String, Object> fetchReplicaMetrics(String solrNode, Map<String, Object> metricsKeyVsTag) {
+      protected Map<String, Object> fetchReplicaMetrics(String solrNode, Map<String, Pair<String, ReplicaInfo>> metricsKeyVsTagReplica) {
         //e.g: solr.core.perReplicaDataColl.shard1.replica_n4:INDEX.sizeInBytes
         Map<String, Object> result = new HashMap<>();
-        metricsKeyVsTag.forEach((k, v) -> {
+        metricsKeyVsTagReplica.forEach((k, v) -> {
           if (k.endsWith(":INDEX.sizeInBytes")) result.put(k, 100);
         });
         return result;

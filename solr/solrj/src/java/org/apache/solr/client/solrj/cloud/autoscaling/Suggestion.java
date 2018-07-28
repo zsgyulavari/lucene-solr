@@ -800,9 +800,4 @@ public class Suggestion {
     }
   }
 
-  static {
-    for (Suggestion.ConditionType t : Suggestion.ConditionType.values()) Suggestion.validatetypes.put(t.tagName, t);
-  }
-
-
 }
