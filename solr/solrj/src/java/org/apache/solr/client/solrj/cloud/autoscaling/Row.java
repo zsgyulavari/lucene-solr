@@ -112,7 +112,7 @@ public class Row implements MapWriter {
 
   @Override
   public String toString() {
-    return node;
+    return jsonStr();
   }
 
   public Row addReplica(String coll, String shard, Replica.Type type) {
