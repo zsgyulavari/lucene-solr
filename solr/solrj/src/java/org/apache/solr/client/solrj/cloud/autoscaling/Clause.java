@@ -38,7 +38,6 @@ import org.apache.solr.common.util.StrUtils;
 import org.apache.solr.common.util.Utils;
 
 import static java.util.Collections.singletonMap;
-import static org.apache.solr.client.solrj.cloud.autoscaling.Clause.TestStatus.PASS;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Operand.EQUAL;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Operand.GREATER_THAN;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Operand.LESS_THAN;
