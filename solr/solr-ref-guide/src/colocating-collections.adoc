@@ -18,7 +18,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-Solr provides a way to co-locate two collections together so that cross-collection joins are always possible.
+Solr provides a way to co-locate a collection with another so that cross-collection joins are always possible.
 
 The co-location guarantee applies to all future Collection operations made either via Collections API or by Autoscaling
 actions.
@@ -69,3 +69,8 @@ which can prevent such overloading by e.g. setting the maximum number of cores p
 
 Example:
 `{'cores' : '<8', 'node' : '#ANY'}`
+
+The co-location guarantee is one-way only i.e. a collection 'X' co-located with 'Y' will always have one or more
+replicas of 'Y' on any node that has a replica of 'X' but the reverse is not true. There may be nodes which have one or
+more replicas of 'Y' but no replicas of 'X'. Such replicas of 'Y' will not be considered a violation of co-location
+rules and will not be cleaned up automatically.
