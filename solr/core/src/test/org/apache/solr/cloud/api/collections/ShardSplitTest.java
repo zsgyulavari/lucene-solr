@@ -39,10 +39,8 @@ import org.apache.solr.client.solrj.embedded.JettySolrRunner;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.impl.HttpSolrClient;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
-import org.apache.solr.client.solrj.request.CoreAdminRequest;
 import org.apache.solr.client.solrj.request.QueryRequest;
 import org.apache.solr.client.solrj.response.CollectionAdminResponse;
-import org.apache.solr.client.solrj.response.CoreAdminResponse;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.client.solrj.response.RequestStatusState;
 import org.apache.solr.cloud.AbstractDistribZkTestBase;
@@ -74,7 +72,7 @@ import static org.apache.solr.common.cloud.ZkStateReader.MAX_SHARDS_PER_NODE;
 import static org.apache.solr.common.cloud.ZkStateReader.REPLICATION_FACTOR;
 
 @Slow
-@LogLevel("org.apache.solr.cloud.Overseer=DEBUG;org.apache.solr.cloud.overseer=DEBUG;org.apache.solr.cloud.api.collections=DEBUG")
+@LogLevel("org.apache.solr.cloud.Overseer=DEBUG;org.apache.solr.cloud.overseer=DEBUG;org.apache.solr.cloud.api.collections=DEBUG;org.apache.solr.cloud.OverseerTaskProcessor=DEBUG")
 public class ShardSplitTest extends BasicDistributedZkTest {
 
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
@@ -395,8 +393,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     assertEquals("actual PULL", numPull, actualPull.get());
   }
 
-    @Test
-  @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028")
+  @Test
   public void testSplitWithChaosMonkey() throws Exception {
     waitForThingsToLevelOut(15);
 
@@ -478,7 +475,7 @@ public class ShardSplitTest extends BasicDistributedZkTest {
       // indexed are available in SolrCloud and if the split succeeded then all replicas of the sub-shard
       // must be consistent (i.e. have same numdocs)
 
-      log.info("Shard split request state is COMPLETED");
+      log.info("Shard split request state is {}", splitStatus == null ? "unknown" : splitStatus.getKey());
       stop.set(true);
       monkeyThread.join();
       Set<String> addFails = new HashSet<>();
@@ -494,37 +491,9 @@ public class ShardSplitTest extends BasicDistributedZkTest {
       cloudClient.getZkStateReader().forceUpdateCollection(AbstractDistribZkTestBase.DEFAULT_COLLECTION);
       log.info("Current collection state: {}", printClusterStateInfo(AbstractDistribZkTestBase.DEFAULT_COLLECTION));
 
-      boolean replicaCreationsFailed = false;
-      if (splitStatus == RequestStatusState.FAILED)  {
-        // either one or more replica creation failed (because it may have been created on the same parent shard leader node)
-        // or the split may have failed while trying to soft-commit *after* all replicas have been created
-        // the latter counts as a successful switch even if the API doesn't say so
-        // so we must find a way to distinguish between the two
-        // an easy way to do that is to look at the sub-shard replicas and check if the replica core actually exists
-        // instead of existing solely inside the cluster state
-        DocCollection collectionState = cloudClient.getZkStateReader().getClusterState().getCollection(AbstractDistribZkTestBase.DEFAULT_COLLECTION);
-        Slice slice10 = collectionState.getSlice(SHARD1_0);
-        Slice slice11 = collectionState.getSlice(SHARD1_1);
-        if (slice10 != null && slice11 != null) {
-          for (Replica replica : slice10) {
-            if (!doesReplicaCoreExist(replica)) {
-              replicaCreationsFailed = true;
-              break;
-            }
-          }
-          for (Replica replica : slice11) {
-            if (!doesReplicaCoreExist(replica)) {
-              replicaCreationsFailed = true;
-              break;
-            }
-          }
-        }
-      }
-
       // true if sub-shard states switch to 'active' eventually
       AtomicBoolean areSubShardsActive = new AtomicBoolean(false);
-
-      if (!replicaCreationsFailed)  {
+      if (splitStatus == RequestStatusState.COMPLETED) {
         // all sub-shard replicas were created successfully so all cores must recover eventually
         waitForRecoveriesToFinish(AbstractDistribZkTestBase.DEFAULT_COLLECTION, true);
         // let's wait for the overseer to switch shard states
@@ -585,23 +554,6 @@ public class ShardSplitTest extends BasicDistributedZkTest {
       stop.set(true);
       monkeyThread.join();
     }
-  }
-
-  private boolean doesReplicaCoreExist(Replica replica) throws IOException {
-    try (HttpSolrClient client = new HttpSolrClient.Builder(replica.getStr(BASE_URL_PROP))
-        .withHttpClient(cloudClient.getLbClient().getHttpClient()).build())  {
-      String coreName = replica.getCoreName();
-      try {
-        CoreAdminResponse status = CoreAdminRequest.getStatus(coreName, client);
-        if (status.getCoreStatus(coreName) == null || status.getCoreStatus(coreName).size() == 0) {
-          return false;
-        }
-      } catch (Exception e) {
-        log.warn("Error gettting core status of replica " + replica + ". Perhaps it does not exist!", e);
-        return false;
-      }
-    }
-    return true;
   }
 
   @Test
