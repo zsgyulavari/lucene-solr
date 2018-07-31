@@ -63,6 +63,7 @@ import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.CollectionParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.util.Utils;
+import org.apache.solr.util.LogLevel;
 import org.apache.solr.util.TestInjection;
 import org.junit.Test;
 import org.slf4j.Logger;
@@ -73,6 +74,7 @@ import static org.apache.solr.common.cloud.ZkStateReader.MAX_SHARDS_PER_NODE;
 import static org.apache.solr.common.cloud.ZkStateReader.REPLICATION_FACTOR;
 
 @Slow
+@LogLevel("org.apache.solr.cloud.Overseer=DEBUG;org.apache.solr.cloud.overseer=DEBUG;org.apache.solr.cloud.api.collections=DEBUG")
 public class ShardSplitTest extends BasicDistributedZkTest {
 
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
@@ -397,6 +399,10 @@ public class ShardSplitTest extends BasicDistributedZkTest {
   @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028")
   public void testSplitWithChaosMonkey() throws Exception {
     waitForThingsToLevelOut(15);
+
+    log.info("Using legacyCloud=false for cluster");
+    CollectionAdminRequest.setClusterProperty(ZkStateReader.LEGACY_CLOUD, "false")
+        .process(cloudClient);
 
     List<StoppableIndexingThread> indexers = new ArrayList<>();
     try {
