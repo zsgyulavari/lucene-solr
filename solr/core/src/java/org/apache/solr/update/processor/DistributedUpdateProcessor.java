@@ -896,7 +896,7 @@ public class DistributedUpdateProcessor extends UpdateRequestProcessor {
           // not the leader anymore maybe or the error'd node is not my replica?
           if (!foundErrorNodeInReplicaList) {
             log.warn("Core "+cloudDesc.getCoreNodeName()+" belonging to "+collection+" "+
-                shardId+", does not have error'd node " + stdNode.getNodeProps().getCoreUrl() + " as a replica. " +
+                cloudDesc.getShardId()+", does not have error'd node " + stdNode.getNodeProps().getCoreUrl() + " as a replica. " +
                 "No request recovery command will be sent!");
             if (!shardId.equals(cloudDesc.getShardId())) {
               // some replicas on other shard did not receive the updates (ex: during splitshard),
