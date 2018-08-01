@@ -1693,7 +1693,7 @@ public class DistributedUpdateProcessor extends UpdateRequestProcessor {
             return;
           }
 
-          if (replicaType == Replica.Type.TLOG && (cmd.getFlags() & UpdateCommand.REPLAY) == 0) {
+          if (!isSubShardLeader && replicaType == Replica.Type.TLOG && (cmd.getFlags() & UpdateCommand.REPLAY) == 0) {
             // TLOG replica not leader, don't write the DBQ to IW
             cmd.setFlags(cmd.getFlags() | UpdateCommand.IGNORE_INDEXWRITER);
           }
@@ -1852,7 +1852,7 @@ public class DistributedUpdateProcessor extends UpdateRequestProcessor {
               }
             }
 
-            if (replicaType == Replica.Type.TLOG && (cmd.getFlags() & UpdateCommand.REPLAY) == 0) {
+            if (!isSubShardLeader && replicaType == Replica.Type.TLOG && (cmd.getFlags() & UpdateCommand.REPLAY) == 0) {
               cmd.setFlags(cmd.getFlags() | UpdateCommand.IGNORE_INDEXWRITER);
             }
           }
