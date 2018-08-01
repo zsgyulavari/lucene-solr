@@ -948,6 +948,7 @@ public class DistributedUpdateProcessor extends UpdateRequestProcessor {
  
   // must be synchronized by bucket
   private void doLocalAdd(AddUpdateCommand cmd) throws IOException {
+    log.info("Locally adding: {} with flags: {}", cmd, cmd.getFlags()); // todo nocommit
     super.processAdd(cmd);
     isIndexChanged = true;
   }
@@ -1150,7 +1151,7 @@ public class DistributedUpdateProcessor extends UpdateRequestProcessor {
                 }
               }
             }
-            if (replicaType == Replica.Type.TLOG && (cmd.getFlags() & UpdateCommand.REPLAY) == 0) {
+            if (!isSubShardLeader && replicaType == Replica.Type.TLOG && (cmd.getFlags() & UpdateCommand.REPLAY) == 0) {
               cmd.setFlags(cmd.getFlags() | UpdateCommand.IGNORE_INDEXWRITER);
             }
           }
