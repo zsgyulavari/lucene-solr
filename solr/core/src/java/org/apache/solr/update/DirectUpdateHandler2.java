@@ -269,7 +269,6 @@ public class DirectUpdateHandler2 extends UpdateHandler implements SolrCoreState
     }
     try {
       if ((cmd.getFlags() & UpdateCommand.IGNORE_INDEXWRITER) != 0) {
-        log.info("Ignored command: {} with flags: {}", cmd, cmd.getFlags()); // todo nocommit
         if (ulog != null) ulog.add(cmd);
         return 1;
       }

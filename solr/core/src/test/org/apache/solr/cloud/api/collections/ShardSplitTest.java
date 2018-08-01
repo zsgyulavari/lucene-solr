@@ -91,11 +91,6 @@ public class ShardSplitTest extends BasicDistributedZkTest {
     useFactory(null);
   }
 
-  @Override
-  protected boolean useTlogReplicas() {
-    return true; // todo nocommit
-  }
-
   @Test
   // 12-Jun-2018 @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028")
   public void test() throws Exception {
