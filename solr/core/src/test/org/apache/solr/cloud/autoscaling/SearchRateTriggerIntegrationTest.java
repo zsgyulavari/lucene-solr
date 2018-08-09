@@ -235,9 +235,8 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     assertTrue(TimeUnit.SECONDS.convert(waitForSeconds, TimeUnit.NANOSECONDS) - WAIT_FOR_DELTA_NANOS <= now - ev.event.getEventTime());
     Map<String, Double> nodeRates = (Map<String, Double>) ev.event.getProperties().get(SearchRateTrigger.HOT_NODES);
     assertNotNull("nodeRates", nodeRates);
-    assertTrue(nodeRates.toString(), nodeRates.size() > 0);
-    AtomicDouble totalNodeRate = new AtomicDouble();
-    nodeRates.forEach((n, r) -> totalNodeRate.addAndGet(r));
+    // no node violations because node rates weren't set in the config
+    assertTrue(nodeRates.toString(), nodeRates.isEmpty());
     List<ReplicaInfo> replicaRates = (List<ReplicaInfo>) ev.event.getProperties().get(SearchRateTrigger.HOT_REPLICAS);
     assertNotNull("replicaRates", replicaRates);
     assertTrue(replicaRates.toString(), replicaRates.size() > 0);
@@ -260,8 +259,8 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     Double collectionRate = collectionRates.get(COLL1);
     assertNotNull(collectionRate);
     assertTrue(collectionRate > 5.0);
-    assertEquals(collectionRate, totalNodeRate.get(), 5.0);
-    assertEquals(collectionRate, totalShardRate.get(), 5.0);
+    // two replicas - the trigger calculates average over all searchable replicas
+    assertEquals(collectionRate / 2, totalShardRate.get(), 5.0);
     assertEquals(collectionRate, totalReplicaRate.get(), 5.0);
 
     // check operations
@@ -303,6 +302,8 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         "'collections' : '" + COLL1 + "'," +
         "'aboveRate' : 1.0," +
         "'belowRate' : 0.1," +
+        "'aboveNodeRate' : 1.0," +
+        "'belowNodeRate' : 0.1," +
         // do nothing but generate an op
         "'belowNodeOp' : 'none'," +
         "'actions' : [" +
@@ -383,7 +384,7 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     response = solrClient.request(req);
     assertEquals(response.get("result").toString(), "success");
 
-    timeSource.sleep(5000);
+    timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
 
     List<CapturedEvent> events = listenerEvents.get("srt");
     assertEquals(events.toString(), 3, events.size());
@@ -445,9 +446,14 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     assertEquals(ops.toString(), 1, ops.size());
     assertEquals(ops.toString(), CollectionParams.CollectionAction.NONE, ops.get(0).getAction());
 
+    // wait for waitFor to elapse for all types of violations
+    timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds * 2, TimeUnit.SECONDS));
+
     listenerEvents.clear();
     finished = new CountDownLatch(1);
     started = new CountDownLatch(1);
+
+    log.info("## test single replicas.");
 
     // now allow single replicas
     setTriggerCommand = "{" +
@@ -459,6 +465,8 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         "'collections' : '" + COLL1 + "'," +
         "'aboveRate' : 1.0," +
         "'belowRate' : 0.1," +
+        "'aboveNodeRate' : 1.0," +
+        "'belowNodeRate' : 0.1," +
         "'minReplicas' : 1," +
         "'belowNodeOp' : 'none'," +
         "'actions' : [" +
@@ -543,6 +551,9 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         "'collections' : '" + COLL1 + "'," +
         "'aboveRate' : 1.0," +
         "'belowRate' : 0.1," +
+        // set limits to node rates
+        "'aboveNodeRate' : 1.0," +
+        "'belowNodeRate' : 0.1," +
         // allow deleting all spare replicas
         "'minReplicas' : 1," +
         // allow requesting all deletions in one event

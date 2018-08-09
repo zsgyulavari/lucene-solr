@@ -1160,7 +1160,7 @@ public class TestTriggerIntegration extends SimSolrCloudTestCase {
     CollectionAdminRequest.Create create = CollectionAdminRequest.createCollection(COLL1,
         "conf", 1, 2);
     create.process(solrClient);
-    CloudTestUtils.waitForState(cluster, COLL1, 10, TimeUnit.SECONDS, CloudTestUtils.clusterShape(1, 2));
+    CloudTestUtils.waitForState(cluster, COLL1, 10, TimeUnit.SECONDS, CloudTestUtils.clusterShape(1, 2, false, true));
 
     String setTriggerCommand = "{" +
         "'set-trigger' : {" +
@@ -1169,6 +1169,7 @@ public class TestTriggerIntegration extends SimSolrCloudTestCase {
         "'waitFor' : '" + waitForSeconds + "s'," +
         "'enabled' : true," +
         "'aboveRate' : 1.0," +
+        "'aboveNodeRate' : 1.0," +
         "'actions' : [" +
         "{'name':'compute','class':'" + ComputePlanAction.class.getName() + "'}" +
         "{'name':'execute','class':'" + ExecutePlanAction.class.getName() + "'}" +

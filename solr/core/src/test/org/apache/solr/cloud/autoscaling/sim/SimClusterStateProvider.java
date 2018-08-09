@@ -599,12 +599,16 @@ public class SimClusterStateProvider implements ClusterStateProvider {
       if (!collections.contains(dc.getName())) {
         return;
       }
-      dc.getSlices().forEach(s ->
+      dc.getSlices().forEach(s -> {
+        if (s.getLeader() != null) {
+          return;
+        }
+        LOG.debug("-- submit leader election for {} / {}", dc.getName(), s.getName());
         cloudManager.submit(() -> {
           simRunLeaderElection(dc.getName(), s, saveClusterState);
           return true;
-        })
-      );
+        });
+      });
     });
   }
 
@@ -612,59 +616,71 @@ public class SimClusterStateProvider implements ClusterStateProvider {
     AtomicBoolean stateChanged = new AtomicBoolean(Boolean.FALSE);
     Replica leader = s.getLeader();
     if (leader == null || !liveNodes.contains(leader.getNodeName())) {
-      LOG.trace("Running leader election for " + collection + " / " + s.getName());
+      LOG.debug("Running leader election for {} / {}", collection, s.getName());
       if (s.getReplicas().isEmpty()) { // no replicas - punt
+        LOG.debug("-- no replicas in {} / {}", collection, s.getName());
         return;
       }
       ActionThrottle lt = getThrottle(collection, s.getName());
-      lt.minimumWaitBetweenActions();
-      lt.markAttemptingAction();
-
-      // mark all replicas as non-leader (probably not necessary) and collect all active and live
-      List<ReplicaInfo> active = new ArrayList<>();
-      s.getReplicas().forEach(r -> {
-        // find our ReplicaInfo for this replica
-        ReplicaInfo ri = getReplicaInfo(r);
-        if (ri == null) {
-          throw new IllegalStateException("-- could not find ReplicaInfo for replica " + r);
-        }
-        synchronized (ri) {
-          if (ri.getVariables().remove(ZkStateReader.LEADER_PROP) != null) {
-            stateChanged.set(true);
+      synchronized (lt) {
+        // collect all active and live
+        List<ReplicaInfo> active = new ArrayList<>();
+        AtomicBoolean alreadyHasLeader = new AtomicBoolean(false);
+        s.getReplicas().forEach(r -> {
+          // find our ReplicaInfo for this replica
+          ReplicaInfo ri = getReplicaInfo(r);
+          if (ri == null) {
+            throw new IllegalStateException("-- could not find ReplicaInfo for replica " + r);
           }
-          if (r.isActive(liveNodes.get())) {
-            active.add(ri);
-          } else { // if it's on a node that is not live mark it down
-            if (!liveNodes.contains(r.getNodeName())) {
-              ri.getVariables().put(ZkStateReader.STATE_PROP, Replica.State.DOWN.toString());
-              stateChanged.set(true);
+          synchronized (ri) {
+            if (ri.getVariables().get(ZkStateReader.LEADER_PROP) != null) {
+              if (r.isActive(liveNodes.get())) {
+                alreadyHasLeader.set(true);
+                return;
+              }
+            }
+            if (r.isActive(liveNodes.get())) {
+              active.add(ri);
+            } else { // if it's on a node that is not live mark it down
+              if (!liveNodes.contains(r.getNodeName())) {
+                ri.getVariables().put(ZkStateReader.STATE_PROP, Replica.State.DOWN.toString());
+                ri.getVariables().remove(ZkStateReader.LEADER_PROP);
+                stateChanged.set(true);
+              }
             }
           }
+        });
+        if (active.isEmpty()) {
+          LOG.warn("-- can't find any active replicas for " + collection + " / " + s.getName());
+          return;
         }
-      });
-      if (active.isEmpty()) {
-        LOG.warn("-- can't find any active replicas for " + collection + " / " + s.getName());
-        return;
-      }
-      // pick first active one
-      ReplicaInfo ri = null;
-      for (ReplicaInfo a : active) {
-        if (!a.getType().equals(Replica.Type.PULL)) {
-          ri = a;
-          break;
+        if (alreadyHasLeader.get()) {
+          LOG.debug("-- already has leader {} / {}", collection, s.getName());
+          return;
         }
+        // pick first active one
+        ReplicaInfo ri = null;
+        for (ReplicaInfo a : active) {
+          if (!a.getType().equals(Replica.Type.PULL)) {
+            ri = a;
+            break;
+          }
+        }
+        if (ri == null) {
+          LOG.warn("-- can't find any suitable replica type for " + collection + " / " + s.getName());
+          return;
+        }
+        // now mark the leader election throttle
+        lt.minimumWaitBetweenActions();
+        lt.markAttemptingAction();
+        synchronized (ri) {
+          ri.getVariables().put(ZkStateReader.LEADER_PROP, "true");
+        }
+        stateChanged.set(true);
+        LOG.debug("-- elected new leader for " + collection + " / " + s.getName() + ": " + ri);
       }
-      if (ri == null) {
-        LOG.warn("-- can't find any suitable replica type for " + collection + " / " + s.getName());
-        return;
-      }
-      synchronized (ri) {
-        ri.getVariables().put(ZkStateReader.LEADER_PROP, "true");
-      }
-      stateChanged.set(true);
-      LOG.debug("-- elected new leader for " + collection + " / " + s.getName() + ": " + ri);
     } else {
-      LOG.trace("-- already has leader for {} / {}", collection, s.getName());
+      LOG.debug("-- already has leader for {} / {}", collection, s.getName());
     }
     if (stateChanged.get() || saveState) {
       collectionsStatesRef.set(null);
@@ -781,7 +797,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
         ReplicaInfo ri = new ReplicaInfo("core_node" + Assign.incAndGetId(stateManager, collectionName, 0),
             coreName, collectionName, pos.shard, pos.type, pos.node, replicaProps);
         cloudManager.submit(() -> {
-          simAddReplica(pos.node, ri, false);
+          simAddReplica(pos.node, ri, true);
           finalStateLatch.countDown();
           return true;
         });
@@ -814,7 +830,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
 
     // force recreation of collection states
     collectionsStatesRef.set(null);
-    simRunLeaderElection(Collections.singleton(collectionName), true);
+    //simRunLeaderElection(Collections.singleton(collectionName), true);
     if (waitForFinalState) {
       boolean finished = finalStateLatch.await(cloudManager.getTimeSource().convertDelay(TimeUnit.SECONDS, 60, TimeUnit.MILLISECONDS),
           TimeUnit.MILLISECONDS);
