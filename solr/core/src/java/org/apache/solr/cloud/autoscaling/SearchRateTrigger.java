@@ -370,6 +370,10 @@ public class SearchRateTrigger extends TriggerBase {
         continue;
       }
       Map<String, Object> rates = cloudManager.getNodeStateProvider().getNodeValues(node, metricTags.keySet());
+      if (log.isDebugEnabled()) {
+        log.debug("### rates for node " + node);
+        rates.forEach((tag, rate) -> log.debug("###  " + tag + "\t" + rate));
+      }
       rates.forEach((tag, rate) -> {
         ReplicaInfo info = metricTags.get(tag);
         if (info == null) {
@@ -386,6 +390,15 @@ public class SearchRateTrigger extends TriggerBase {
       });
     }
 
+    if (log.isDebugEnabled()) {
+      collectionRates.forEach((coll, collRates) -> {
+        log.debug("## Collection: {}", coll);
+        collRates.forEach((s, replicas) -> {
+          log.debug("##  - {}", s);
+          replicas.forEach(ri -> log.debug("##     {}  {}", ri.getCore(), ri.getVariable(AutoScalingParams.RATE)));
+        });
+      });
+    }
     long now = cloudManager.getTimeSource().getTimeNs();
     Map<String, Double> hotNodes = new HashMap<>();
     Map<String, Double> coldNodes = new HashMap<>();
@@ -415,7 +428,7 @@ public class SearchRateTrigger extends TriggerBase {
     List<ReplicaInfo> coldReplicas = new ArrayList<>();
     collectionRates.forEach((coll, shardRates) -> {
       shardRates.forEach((sh, replicaRates) -> {
-        double shardRate = replicaRates.stream()
+        double totalShardRate = replicaRates.stream()
             .map(r -> {
               String elapsedKey = r.getCollection() + "." + r.getCore();
               if ((Double)r.getVariable(AutoScalingParams.RATE) > aboveRate) {
@@ -434,8 +447,9 @@ public class SearchRateTrigger extends TriggerBase {
             })
             .mapToDouble(r -> (Double)r.getVariable(AutoScalingParams.RATE)).sum();
         // calculate average shard rate over all searchable replicas (see SOLR-12470)
-        shardRate = shardRate / searchableReplicationFactors.get(coll).get(sh).doubleValue();
+        double shardRate = totalShardRate / searchableReplicationFactors.get(coll).get(sh).doubleValue();
         String elapsedKey = coll + "." + sh;
+        log.debug("-- {}: totalShardRate={}, shardRate={}", elapsedKey, totalShardRate, shardRate);
         if ((collections.isEmpty() || collections.contains(coll)) &&
             (shard.equals(Policy.ANY) || shard.equals(sh))) {
           if (shardRate > aboveRate) {
@@ -445,12 +459,12 @@ public class SearchRateTrigger extends TriggerBase {
           } else if (shardRate < belowRate) {
             if (waitForElapsed(elapsedKey, now, lastShardEvent)) {
               coldShards.computeIfAbsent(coll, s -> new HashMap<>()).put(sh, shardRate);
+              log.debug("-- coldShard waitFor elapsed {}", elapsedKey);
             } else {
               if (log.isDebugEnabled()) {
                 Long lastTime = lastShardEvent.computeIfAbsent(elapsedKey, s -> now);
                 long elapsed = TimeUnit.SECONDS.convert(now - lastTime, TimeUnit.NANOSECONDS);
-                log.debug("-- waitFor didn't elapse for " + elapsedKey + ", waitFor=" + getWaitForSecond() +
-                    ", elapsed=" + elapsed);
+                log.debug("-- waitFor didn't elapse for {}, waitFor={}, elapsed={}", elapsedKey, getWaitForSecond(), elapsed);
               }
             }
           } else {

@@ -254,18 +254,19 @@ set then cumulative per-node rates will be ignored.
 `belowNodeRate`:: (float) the lower bound for the total request rate metric value per node. If not
 set then cumulative per-node rates will be ignored.
 
-`aboveOp`:: (string, optional) collection action to request when the upper threshold for a shard or replica is
+`aboveOp`:: (string, optional) collection action to request when the upper threshold for a shard is
 exceeded. Default action is `ADDREPLICA` and the trigger will request from 1 up to `maxOps` operations
 per shard per event, proportionally to how much the rate is exceeded. This property can be set to 'NONE'
 to effectively disable the action but still report it to the listeners.
 
 `aboveNodeOp`:: (string, optional) collection action to request when the upper threshold for a node (`aboveNodeRate`) is exceeded.
 Default action is `MOVEREPLICA`, and the trigger will request 1 replica operation per hot node per event.
-If both `aboveOp` and `aboveNodeOp` operations are requested then `aboveNodeOp` operations are
-always requested first. This property can be set to 'NONE' to effectively disable the action but still
-report it to the listeners.
+If both `aboveOp` and `aboveNodeOp` operations are to be requested then `aboveNodeOp` operations are
+always requested first, and only if no `aboveOp` (shard level) operations are to be requested (because `aboveOp`
+operations will change node-level rates anyway). This property can be set to 'NONE' to effectively disable
+the action but still report it to the listeners.
 
-`belowOp`:: (string, optional) collection action to request when the lower threshold for a shard or replica is
+`belowOp`:: (string, optional) collection action to request when the lower threshold for a shard is
 exceeded. Default action is `DELETEREPLICA`, and the trigger will request at most `maxOps` replicas
 to be deleted from eligible cold shards. This property can be set to 'NONE'
 to effectively disable the action but still report it to the listeners.

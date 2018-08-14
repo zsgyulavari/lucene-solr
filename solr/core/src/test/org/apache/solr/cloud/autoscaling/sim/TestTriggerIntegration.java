@@ -1153,7 +1153,7 @@ public class TestTriggerIntegration extends SimSolrCloudTestCase {
   }
 
   @Test
-  @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028")
+  //@BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028")
   public void testSearchRate() throws Exception {
     SolrClient solrClient = cluster.simGetSolrClient();
     String COLL1 = "collection1";

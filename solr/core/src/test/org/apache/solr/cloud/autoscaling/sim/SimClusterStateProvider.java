@@ -346,6 +346,9 @@ public class SimClusterStateProvider implements ClusterStateProvider {
     if (replicas != null) {
       replicas.forEach(r -> {
         r.getVariables().put(ZkStateReader.STATE_PROP, state.toString());
+        if (state != Replica.State.ACTIVE) {
+          r.getVariables().remove(ZkStateReader.LEADER_PROP);
+        }
         changedCollections.add(r.getCollection());
       });
     }
@@ -603,7 +606,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
         if (s.getLeader() != null) {
           return;
         }
-        LOG.debug("-- submit leader election for {} / {}", dc.getName(), s.getName());
+        LOG.trace("-- submit leader election for {} / {}", dc.getName(), s.getName());
         cloudManager.submit(() -> {
           simRunLeaderElection(dc.getName(), s, saveClusterState);
           return true;
@@ -618,7 +621,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
     if (leader == null || !liveNodes.contains(leader.getNodeName())) {
       LOG.debug("Running leader election for {} / {}", collection, s.getName());
       if (s.getReplicas().isEmpty()) { // no replicas - punt
-        LOG.debug("-- no replicas in {} / {}", collection, s.getName());
+        LOG.trace("-- no replicas in {} / {}", collection, s.getName());
         return;
       }
       ActionThrottle lt = getThrottle(collection, s.getName());
@@ -655,7 +658,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
           return;
         }
         if (alreadyHasLeader.get()) {
-          LOG.debug("-- already has leader {} / {}", collection, s.getName());
+          LOG.trace("-- already has leader {} / {}", collection, s.getName());
           return;
         }
         // pick first active one

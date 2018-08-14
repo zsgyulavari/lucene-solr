@@ -570,8 +570,13 @@ public class TestLargeCluster extends SimSolrCloudTestCase {
             "waitFor=" + waitFor + ", killDelay=" + killDelay + ", minIgnored=" + minIgnored,
             cluster.simGetOpCount("MOVEREPLICA") > 0);
 
-    log.info("Ready after " + CloudTestUtils.waitForState(cluster, collectionName, 20 * NUM_NODES, TimeUnit.SECONDS,
-        CloudTestUtils.clusterShape(NUM_NODES / 5, NUM_NODES / 10, false, true)) + " ms");
+    if (listenerEvents.isEmpty()) {
+      // no failed movements - verify collection shape
+      log.info("Ready after " + CloudTestUtils.waitForState(cluster, collectionName, 20 * NUM_NODES, TimeUnit.SECONDS,
+          CloudTestUtils.clusterShape(NUM_NODES / 5, NUM_NODES / 10, false, true)) + " ms");
+    } else {
+      cluster.getTimeSource().sleep(NUM_NODES * 100);
+    }
 
     int count = 50;
     SolrInputDocument finishedEvent = null;
@@ -604,9 +609,13 @@ public class TestLargeCluster extends SimSolrCloudTestCase {
     delta = TimeUnit.NANOSECONDS.toMillis(delta);
     log.info("#### System stabilized after " + delta + " ms");
     long ops = cluster.simGetOpCount("MOVEREPLICA");
-    assertTrue("unexpected number of MOVEREPLICA ops: " + ops + ", " +
+    long expectedMinOps = 40;
+    if (!listenerEvents.isEmpty()) {
+      expectedMinOps = 20;
+    }
+    assertTrue("unexpected number (" + expectedMinOps + ") of MOVEREPLICA ops: " + ops + ", " +
             "waitFor=" + waitFor + ", killDelay=" + killDelay + ", minIgnored=" + minIgnored,
-            ops >= 40);
+            ops >= expectedMinOps);
     return delta;
   }
 

@@ -301,9 +301,11 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         "'enabled' : false," +
         "'collections' : '" + COLL1 + "'," +
         "'aboveRate' : 1.0," +
-        "'belowRate' : 0.1," +
+        // RecoveryStrategy calls /admin/ping, which calls /select so this may not be zero
+        // even when no external requests were made
+        "'belowRate' : 0.3," +
         "'aboveNodeRate' : 1.0," +
-        "'belowNodeRate' : 0.1," +
+        "'belowNodeRate' : 0.3," +
         // do nothing but generate an op
         "'belowNodeOp' : 'none'," +
         "'actions' : [" +
@@ -443,8 +445,9 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     assertEquals(ev.toString(), "compute", ev.actionName);
     ops = (List<TriggerEvent.Op>)ev.event.getProperty(TriggerEvent.REQUESTED_OPS);
     assertNotNull("there should be some requestedOps: " + ev.toString(), ops);
-    assertEquals(ops.toString(), 1, ops.size());
+    assertEquals(ops.toString(), 2, ops.size());
     assertEquals(ops.toString(), CollectionParams.CollectionAction.NONE, ops.get(0).getAction());
+    assertEquals(ops.toString(), CollectionParams.CollectionAction.NONE, ops.get(1).getAction());
 
     // wait for waitFor to elapse for all types of violations
     timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds * 2, TimeUnit.SECONDS));
@@ -464,9 +467,9 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
         "'enabled' : true," +
         "'collections' : '" + COLL1 + "'," +
         "'aboveRate' : 1.0," +
-        "'belowRate' : 0.1," +
+        "'belowRate' : 0.3," +
         "'aboveNodeRate' : 1.0," +
-        "'belowNodeRate' : 0.1," +
+        "'belowNodeRate' : 0.3," +
         "'minReplicas' : 1," +
         "'belowNodeOp' : 'none'," +
         "'actions' : [" +
@@ -499,21 +502,20 @@ public class SearchRateTriggerIntegrationTest extends SolrCloudTestCase {
     assertEquals(ev.toString(), "compute", ev.actionName);
     ops = (List<TriggerEvent.Op>)ev.event.getProperty(TriggerEvent.REQUESTED_OPS);
     assertNotNull("there should be some requestedOps: " + ev.toString(), ops);
-    assertEquals(ops.toString(), 2, ops.size());
+
+    assertTrue(ops.toString(), ops.size() > 0);
     AtomicInteger coldNodes2 = new AtomicInteger();
-    AtomicInteger coldReplicas2 = new AtomicInteger();
     ops.forEach(op -> {
       if (op.getAction().equals(CollectionParams.CollectionAction.NONE)) {
         coldNodes2.incrementAndGet();
       } else if (op.getAction().equals(CollectionParams.CollectionAction.DELETEREPLICA)) {
-        coldReplicas2.incrementAndGet();
+        // ignore
       } else {
         fail("unexpected op: " + op);
       }
     });
 
-    assertEquals("coldNodes", 1, coldNodes2.get());
-    assertEquals("colReplicas", 1, coldReplicas2.get());
+    assertEquals("coldNodes: " +ops.toString(), 2, coldNodes2.get());
 
     // now the collection should be at RF == 1, with one additional PULL replica
     CloudTestUtils.waitForState(cloudManager, COLL1, 60, TimeUnit.SECONDS,

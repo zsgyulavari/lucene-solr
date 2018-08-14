@@ -136,12 +136,12 @@ public class CloudTestUtils {
                                                       boolean requireLeaders) {
     return (liveNodes, collectionState) -> {
       if (collectionState == null) {
-        log.debug("-- null collection");
+        log.trace("-- null collection");
         return false;
       }
       Collection<Slice> slices = withInactive ? collectionState.getSlices() : collectionState.getActiveSlices();
       if (slices.size() != expectedShards) {
-        log.debug("-- wrong number of active slices, expected=" + expectedShards + ", found=" + collectionState.getSlices().size());
+        log.trace("-- wrong number of active slices, expected={}, found={}", expectedShards, collectionState.getSlices().size());
         return false;
       }
       Set<String> leaderless = new HashSet<>();
@@ -160,14 +160,14 @@ public class CloudTestUtils {
             activeReplicas++;
         }
         if (activeReplicas != expectedReplicas) {
-          log.debug("-- wrong number of active replicas in slice " + slice.getName() + ", expected=" + expectedReplicas + ", found=" + activeReplicas);
+          log.trace("-- wrong number of active replicas in slice {}, expected={}, found={}", slice.getName(), expectedReplicas, activeReplicas);
           return false;
         }
       }
       if (leaderless.isEmpty()) {
         return true;
       } else {
-        log.debug("-- shards without leaders: " + leaderless);
+        log.trace("-- shards without leaders: {}", leaderless);
         return false;
       }
     };
