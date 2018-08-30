@@ -199,7 +199,7 @@ public class VariableBase implements Variable {
   private static Map<String, Type> validatetypes = null;
 
   /** SOLR-12662: Lazily init validatetypes to avoid Type.values() NPE due to static initializer ordering */
-  private static Map<String, Type> getValidatetypes() {
+  private static synchronized Map<String, Type> getValidatetypes() {
     if (validatetypes == null) {
       validatetypes = new HashMap<>();
       for (Type t : Type.values())
