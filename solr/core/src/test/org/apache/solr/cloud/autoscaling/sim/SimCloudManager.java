@@ -37,6 +37,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.carrotsearch.randomizedtesting.RandomizedContext;
 import com.codahale.metrics.jvm.ClassLoadingGaugeSet;
 import com.codahale.metrics.jvm.GarbageCollectorMetricSet;
 import com.codahale.metrics.jvm.MemoryUsageGaugeSet;
@@ -383,6 +384,13 @@ public class SimCloudManager implements SolrCloudManager {
    */
   public SolrResourceLoader getLoader() {
     return loader;
+  }
+
+  /**
+   * Get the source of randomness (usually initialized by the test suite).
+   */
+  public Random getRandom() {
+    return RandomizedContext.current().getRandom();
   }
 
   /**

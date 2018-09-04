@@ -3,6 +3,7 @@ package org.apache.solr.cloud.autoscaling.sim;
 import java.lang.invoke.MethodHandles;
 import java.util.Iterator;
 
+import com.carrotsearch.randomizedtesting.annotations.TimeoutSuite;
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
@@ -24,7 +25,9 @@ import static org.apache.solr.cloud.autoscaling.AutoScalingHandlerTest.createAut
 /**
  *
  */
-@LogLevel("org.apache.solr.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.NodeLostTrigger=INFO;org.apache.client.solrj.cloud.autoscaling=DEBUG")
+@TimeoutSuite(millis = 48 * 3600 * 1000)
+@LogLevel("org.apache.solr.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.NodeLostTrigger=INFO;org.apache.client.solrj.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.ComputePlanAction=INFO;org.apache.solr.cloud.autoscaling.ExecutePlanAction=INFO;org.apache.solr.cloud.autoscaling.ScheduledTriggers=INFO")
+//@LogLevel("org.apache.solr.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.NodeLostTrigger=INFO;org.apache.client.solrj.cloud.autoscaling=DEBUG;org.apache.solr.cloud.CloudTestUtils=TRACE")
 public class TestSimAutoScaling extends SimSolrCloudTestCase {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
@@ -35,8 +38,7 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
 
   @BeforeClass
   public static void setupCluster() throws Exception {
-    // 20 mln docs / node
-    configureCluster(50, TimeSource.get("simTime:" + SPEED));
+    configureCluster(500, TimeSource.get("simTime:" + SPEED));
     timeSource = cluster.getTimeSource();
     solrClient = cluster.simGetSolrClient();
   }
@@ -56,7 +58,7 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
         "'name' : 'scaleUpTrigger'," +
         "'event' : 'indexSize'," +
         "'waitFor' : '" + waitForSeconds + "s'," +
-        "'aboveDocs' : 5000000," +
+        "'aboveDocs' : 10000000," +
         "'enabled' : true," +
         "'actions' : [{'name' : 'compute_plan', 'class' : 'solr.ComputePlanAction'}," +
         "{'name' : 'execute_plan', 'class' : '" + ExecutePlanAction.class.getName() + "'}]" +
@@ -65,9 +67,9 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
     NamedList<Object> response = solrClient.request(req);
     assertEquals(response.get("result").toString(), "success");
 
-    long batchSize = 250000;
-    for (long i = 0; i < 10000; i++) {
-      log.info("#### Total docs so far: " + (i * batchSize));
+    long batchSize = 4000000;
+    for (long i = 0; i < 100000; i++) {
+      log.info(String.format("#### Total docs so far: %,d", (i * batchSize)));
       addDocs(collectionName, i * batchSize, batchSize);
       timeSource.sleep(waitForSeconds);
     }
@@ -81,12 +83,13 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
   }
 
   // lightweight generator of fake documents
+  // NOTE: this iterator only ever returns the same document, which works ok
+  // for our "index update" simulation. Obviously don't use this for real indexing.
   private static class FakeDocIterator implements Iterator<SolrInputDocument> {
     final SolrInputDocument doc = new SolrInputDocument();
     final SolrInputField idField = new SolrInputField("id");
 
     final long start, count;
-    final StringBuilder sb = new StringBuilder("id-");
 
     long current, max;
 
@@ -95,6 +98,7 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
       this.count = count;
       current = start;
       max = start + count;
+      idField.setValue("foo");
       doc.put("id", idField);
     }
 
@@ -105,8 +109,6 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
 
     @Override
     public SolrInputDocument next() {
-      sb.setLength(3);
-      idField.setValue(sb.append(Long.toString(current)).toString());
       current++;
       return doc;
     }

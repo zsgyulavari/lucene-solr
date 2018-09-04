@@ -171,7 +171,11 @@ public class ComputePlanAction extends TriggerActionBase {
     clusterState.forEachCollection(coll -> {
       Integer rf = coll.getReplicationFactor();
       if (rf == null) {
-        rf = coll.getReplicas().size() / coll.getSlices().size();
+        if (coll.getSlices().isEmpty()) {
+          rf = 1; // ???
+        } else {
+          rf = coll.getReplicas().size() / coll.getSlices().size();
+        }
       }
       totalRF.addAndGet(rf * coll.getSlices().size());
     });
