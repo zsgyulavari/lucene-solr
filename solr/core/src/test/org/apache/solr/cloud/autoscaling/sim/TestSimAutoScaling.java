@@ -32,13 +32,19 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private static final int SPEED = 50;
+  private static final int NUM_NODES = 10;
+
+  private static final long BATCH_SIZE = 200000;
+  private static final long NUM_BATCHES = 1000;
+  private static final long ABOVE_SIZE = 300000;
+
 
   private static TimeSource timeSource;
   private static SolrClient solrClient;
 
   @BeforeClass
   public static void setupCluster() throws Exception {
-    configureCluster(500, TimeSource.get("simTime:" + SPEED));
+    configureCluster(NUM_NODES, TimeSource.get("simTime:" + SPEED));
     timeSource = cluster.getTimeSource();
     solrClient = cluster.simGetSolrClient();
   }
@@ -58,7 +64,7 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
         "'name' : 'scaleUpTrigger'," +
         "'event' : 'indexSize'," +
         "'waitFor' : '" + waitForSeconds + "s'," +
-        "'aboveDocs' : 10000000," +
+        "'aboveDocs' : " + ABOVE_SIZE + "," +
         "'enabled' : true," +
         "'actions' : [{'name' : 'compute_plan', 'class' : 'solr.ComputePlanAction'}," +
         "{'name' : 'execute_plan', 'class' : '" + ExecutePlanAction.class.getName() + "'}]" +
@@ -67,8 +73,8 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
     NamedList<Object> response = solrClient.request(req);
     assertEquals(response.get("result").toString(), "success");
 
-    long batchSize = 4000000;
-    for (long i = 0; i < 100000; i++) {
+    long batchSize = BATCH_SIZE;
+    for (long i = 0; i < NUM_BATCHES; i++) {
       log.info(String.format("#### Total docs so far: %,d", (i * batchSize)));
       addDocs(collectionName, i * batchSize, batchSize);
       timeSource.sleep(waitForSeconds);

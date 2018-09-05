@@ -93,7 +93,7 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
     configureCluster(2)
         .addConfig("conf", configset("cloud-minimal"))
         .configure();
-    if (random().nextBoolean() || true) {
+    if (random().nextBoolean() && false) {
       cloudManager = cluster.getJettySolrRunner(0).getCoreContainer().getZkController().getSolrCloudManager();
       solrClient = cluster.getSolrClient();
       loader = cluster.getJettySolrRunner(0).getCoreContainer().getResourceLoader();
@@ -190,7 +190,7 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
       assertNotNull("should have fired an event", ev);
       List<TriggerEvent.Op> ops = (List<TriggerEvent.Op>) ev.getProperty(TriggerEvent.REQUESTED_OPS);
       assertNotNull("should contain requestedOps", ops);
-      assertEquals("number of ops", 2, ops.size());
+      assertEquals("number of ops: " + ops, 2, ops.size());
       boolean shard1 = false;
       boolean shard2 = false;
       for (TriggerEvent.Op op : ops) {
@@ -425,7 +425,7 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
         "}";
     req = createAutoScalingRequest(SolrRequest.METHOD.POST, resumeTriggerCommand);
     response = solrClient.request(req);
-    assertEquals(response.get("result").toString(), "success");
+    assertEquals("success", response.get("result").toString());
 
     timeSource.sleep(TimeUnit.MILLISECONDS.convert(waitForSeconds + 1, TimeUnit.SECONDS));
 

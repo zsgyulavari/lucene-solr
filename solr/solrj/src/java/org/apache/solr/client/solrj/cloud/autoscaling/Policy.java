@@ -405,13 +405,13 @@ public class Policy implements MapWriter {
       return currentSession.getViolations();
     }
 
-    public boolean undo() {
-      if (currentSession.parent != null) {
-        currentSession = currentSession.parent;
-        return true;
-      }
-      return false;
-    }
+//    public boolean undo() {
+//      if (currentSession.parent != null) {
+//        currentSession = currentSession.parent;
+//        return true;
+//      }
+//      return false;
+//    }
 
 
     public Session getCurrentSession() {
@@ -475,12 +475,12 @@ public class Policy implements MapWriter {
     List<Clause> expandedClauses;
     List<Violation> violations = new ArrayList<>();
     Transaction transaction;
-    private Session parent = null;
+    //private Session parent = null;
 
     private Session(List<String> nodes, SolrCloudManager cloudManager,
                     List<Row> matrix, List<Clause> expandedClauses, int znodeVersion,
                     NodeStateProvider nodeStateProvider, Transaction transaction, Session parent) {
-      this.parent = parent;
+      //this.parent = parent;
       this.transaction = transaction;
       this.nodes = nodes;
       this.cloudManager = cloudManager;

@@ -593,6 +593,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
       int version = oldData != null ? oldData.getVersion() : -1;
       Assert.assertEquals(clusterStateVersion, version + 1);
       stateManager.setData(ZkStateReader.CLUSTER_STATE, data, version);
+      log.debug("** saved cluster state version " + version);
       clusterStateVersion++;
     } catch (Exception e) {
       throw new IOException(e);
@@ -720,7 +721,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
         synchronized (ri) {
           ri.getVariables().put(ZkStateReader.LEADER_PROP, "true");
         }
-        log.trace("-- elected new leader for {} / {}: {}", collection, s.getName(), ri);
+        log.debug("-- elected new leader for {} / {}: {}", collection, s.getName(), ri);
         stateChanged.set(true);
       }
     } else {
@@ -1448,6 +1449,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
       // TODO: we don't use DocRouter so we should verify that active slices cover the whole hash range
 
       long docCount = 0;
+      long[] perSlice = new long[slices.length];
       while (it.hasNext()) {
         SolrInputDocument doc = it.next();
         String id = (String) doc.getFieldValue("id");
@@ -1456,8 +1458,6 @@ public class SimClusterStateProvider implements ClusterStateProvider {
         }
         docCount++;
       }
-      long perSlice = docCount / slices.length;
-      long remainder = docCount % slices.length;
       int initialSlice = cloudManager.getRandom().nextInt(slices.length);
       for (int i = 0; i < slices.length; i++) {
         long addDocs = perSlice;
@@ -1877,7 +1877,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
         Map<String, Object> collProps = collProperties.computeIfAbsent(coll, c -> new ConcurrentHashMap<>());
         Map<String, Object> routerProp = (Map<String, Object>) collProps.getOrDefault(DocCollection.DOC_ROUTER, Collections.singletonMap("name", DocRouter.DEFAULT_NAME));
         DocRouter router = DocRouter.getDocRouter((String)routerProp.getOrDefault("name", DocRouter.DEFAULT_NAME));
-        DocCollection dc = new DocCollection(coll, slices, collProps, router, clusterStateVersion, ZkStateReader.CLUSTER_STATE);
+        DocCollection dc = new DocCollection(coll, slices, collProps, router, clusterStateVersion + 1, ZkStateReader.CLUSTER_STATE);
         res.put(coll, dc);
       });
       collectionsStatesRef.set(res);
