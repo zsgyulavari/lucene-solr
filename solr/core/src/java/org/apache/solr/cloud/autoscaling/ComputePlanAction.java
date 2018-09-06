@@ -134,7 +134,7 @@ public class ComputePlanAction extends TriggerActionBase {
               continue;
             }
           }
-          log.info("Computed Plan: {}", operation.getParams());
+          log.debug("Computed Plan: {}", operation.getParams());
           if (!collections.isEmpty()) {
             String coll = operation.getParams().get(CoreAdminParams.COLLECTION);
             if (coll != null && !collections.contains(coll)) {

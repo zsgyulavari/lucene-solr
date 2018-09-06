@@ -32,11 +32,11 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private static final int SPEED = 50;
-  private static final int NUM_NODES = 10;
+  private static final int NUM_NODES = 50;
 
-  private static final long BATCH_SIZE = 200000;
-  private static final long NUM_BATCHES = 1000;
-  private static final long ABOVE_SIZE = 300000;
+  private static final long BATCH_SIZE = 8000000;
+  private static final long NUM_BATCHES = 100000;
+  private static final long ABOVE_SIZE = 2000000;
 
 
   private static TimeSource timeSource;
@@ -47,6 +47,7 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
     configureCluster(NUM_NODES, TimeSource.get("simTime:" + SPEED));
     timeSource = cluster.getTimeSource();
     solrClient = cluster.simGetSolrClient();
+    cluster.simSetUseSystemCollection(false);
   }
 
   @Test
@@ -104,8 +105,8 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
       this.count = count;
       current = start;
       max = start + count;
-      idField.setValue("foo");
       doc.put("id", idField);
+      idField.setValue("foo");
     }
 
     @Override

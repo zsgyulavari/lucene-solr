@@ -312,7 +312,7 @@ public class PolicyHelper {
       TimeSource timeSource = sessionWrapper.session != null ? sessionWrapper.session.cloudManager.getTimeSource() : TimeSource.NANO_TIME;
       synchronized (lockObj) {
         sessionWrapper.status = Status.EXECUTING;
-        log.info("returnSession, curr-time {} sessionWrapper.createTime {}, this.sessionWrapper.createTime {} ", time(timeSource, MILLISECONDS),
+        log.debug("returnSession, curr-time {} sessionWrapper.createTime {}, this.sessionWrapper.createTime {} ", time(timeSource, MILLISECONDS),
             sessionWrapper.createTime,
             this.sessionWrapper.createTime);
         if (sessionWrapper.createTime == this.sessionWrapper.createTime) {
@@ -323,7 +323,7 @@ public class PolicyHelper {
           //one thread who is waiting for this need to be notified.
           lockObj.notify();
         } else {
-          log.info("create time NOT SAME {} ", SessionWrapper.DEFAULT_INSTANCE.createTime);
+          log.debug("create time NOT SAME {} ", SessionWrapper.DEFAULT_INSTANCE.createTime);
           //else just ignore it
         }
       }

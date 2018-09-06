@@ -155,7 +155,7 @@ public class CreateShardCmd implements OverseerCollectionMessageHandler.Cmd {
 
     Object createNodeSetStr = message.get(OverseerCollectionMessageHandler.CREATE_NODE_SET);
 
-    boolean usePolicyFramework = CloudUtil.usePolicyFramework(collection, cloudManager);
+    boolean usePolicyFramework = CloudUtil.usePolicyFramework(collectionName, cloudManager);
     List<ReplicaPosition> positions;
     if (usePolicyFramework) {
       if (collection.getPolicyName() != null) message.getProperties().put(Policy.POLICY, collection.getPolicyName());

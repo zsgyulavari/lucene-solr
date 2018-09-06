@@ -361,7 +361,7 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
     CloudTestUtils.waitForState(cloudManager, "failed to create " + collectionName, collectionName,
         CloudTestUtils.clusterShape(2, 2, false, true));
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 20; i++) {
       SolrInputDocument doc = new SolrInputDocument("id", "id-" + (i * 100));
       solrClient.add(collectionName, doc);
     }
@@ -412,7 +412,7 @@ public class IndexSizeTriggerTest extends SolrCloudTestCase {
     assertEquals(response.get("result").toString(), "success");
 
     // delete some docs to trigger a merge
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 15; i++) {
       solrClient.deleteById(collectionName, "id-" + (i * 100));
     }
     solrClient.commit(collectionName);

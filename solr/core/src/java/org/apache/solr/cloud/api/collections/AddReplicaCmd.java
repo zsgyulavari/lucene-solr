@@ -258,7 +258,7 @@ public class AddReplicaCmd implements OverseerCollectionMessageHandler.Cmd {
 
     // Kind of unnecessary, but it does put the logic of whether to override maxShardsPerNode in one place.
     if (!skipCreateReplicaInClusterState) {
-      if (CloudUtil.usePolicyFramework(coll, cloudManager)) {
+      if (CloudUtil.usePolicyFramework(collection, cloudManager)) {
         if (node == null) {
           if(coll.getPolicyName() != null) message.getProperties().put(Policy.POLICY, coll.getPolicyName());
           node = Assign.identifyNodes(cloudManager,

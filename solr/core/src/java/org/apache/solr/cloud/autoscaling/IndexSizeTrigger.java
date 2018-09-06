@@ -431,8 +431,15 @@ public class IndexSizeTrigger extends TriggerBase {
                           Map<String, List<ReplicaInfo>> belowSize) {
       super(TriggerEventType.INDEXSIZE, source, eventTime, null);
       properties.put(TriggerEvent.REQUESTED_OPS, ops);
-      properties.put(ABOVE_SIZE_PROP, aboveSize);
-      properties.put(BELOW_SIZE_PROP, belowSize);
+      // avoid passing very large amounts of data here - just use replica names
+      Set<String> above = new HashSet<>();
+      aboveSize.forEach((coll, replicas) ->
+          replicas.forEach(r -> above.add(r.getCore())));
+      properties.put(ABOVE_SIZE_PROP, above);
+      Set<String> below = new HashSet<>();
+      belowSize.forEach((coll, replicas) ->
+          replicas.forEach(r -> below.add(r.getCore())));
+      properties.put(BELOW_SIZE_PROP, below);
     }
   }
 

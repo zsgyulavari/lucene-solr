@@ -149,6 +149,8 @@ public class SimClusterStateProvider implements ClusterStateProvider {
   private AtomicReference<Map<String, DocCollection>> collectionsStatesRef = new AtomicReference<>();
   private AtomicBoolean saveClusterState = new AtomicBoolean();
 
+  private Random bulkUpdateRandom = new Random(0);
+
   private transient boolean closed;
 
   /**
@@ -515,7 +517,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
       cloudManager.getSimNodeStateProvider().simSetNodeValue(nodeId, ImplicitSnitch.CORES, cores + 1);
       Integer disk = (Integer)values.get(ImplicitSnitch.DISK);
       if (disk == null) {
-        disk = SimCloudManager.DEFAULT_DISK;
+        disk = SimCloudManager.DEFAULT_FREE_DISK;
       }
       cloudManager.getSimNodeStateProvider().simSetNodeValue(nodeId, ImplicitSnitch.DISK, disk - 1);
       // fake metrics
@@ -1186,7 +1188,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
     // delay it once again to better simulate replica recoveries
     //opDelay(collectionName, CollectionParams.CollectionAction.SPLITSHARD.name());
 
-    CloudTestUtils.waitForState(cloudManager, collectionName, 20, TimeUnit.SECONDS, (liveNodes, state) -> {
+    CloudTestUtils.waitForState(cloudManager, collectionName, 30, TimeUnit.SECONDS, (liveNodes, state) -> {
       for (String subSlice : subSlices) {
         Slice s = state.getSlice(subSlice);
         if (s.getLeader() == null) {
@@ -1349,7 +1351,6 @@ public class SimClusterStateProvider implements ClusterStateProvider {
     if (deletes != null && !deletes.isEmpty()) {
       for (String id : deletes) {
         Slice s = router.getTargetSlice(id, null, null, req.getParams(), coll);
-        // NOTE: we don't use getProperty because it uses PROPERTY_PROP_PREFIX
         Replica leader = s.getLeader();
         if (leader == null) {
           log.debug("-- no leader in " + s);
@@ -1428,64 +1429,105 @@ public class SimClusterStateProvider implements ClusterStateProvider {
       }
     }
     List<SolrInputDocument> docs = req.getDocuments();
-    Iterator<SolrInputDocument> it;
+    int docCount = 0;
+    Iterator<SolrInputDocument> it = null;
     if (docs != null) {
-      it = docs.iterator();
+      docCount = docs.size();
     } else {
       it = req.getDocIterator();
+      if (it != null) {
+        while (it.hasNext()) {
+          docCount++;
+        }
+      }
     }
-    if (it != null) {
+    if (docCount > 0) {
       // this approach to updating counters and metrics drastically increases performance
       // of bulk updates, because simSetShardValue is relatively costly
 
-      // also, skip the hash-based selection of slices in favor of a simple random
-      // start + round-robin assignment, because we don't keep individual id-s anyway
       Map<String, AtomicLong> docUpdates = new HashMap<>();
       Map<String, Map<String, AtomicLong>> metricUpdates = new HashMap<>();
+
+      // XXX don't add more than 2bln docs in one request
+      boolean modified = false;
       Slice[] slices = coll.getActiveSlicesArr();
       if (slices.length == 0) {
-        throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Update sent to a collection without slices: " + coll);
+        throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Collection without slices");
       }
-      // TODO: we don't use DocRouter so we should verify that active slices cover the whole hash range
+      int[] perSlice = new int[slices.length];
 
-      long docCount = 0;
-      long[] perSlice = new long[slices.length];
-      while (it.hasNext()) {
-        SolrInputDocument doc = it.next();
-        String id = (String) doc.getFieldValue("id");
-        if (id == null) {
-          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Document without id: " + doc);
+      if (it != null) {
+        // BULK UPDATE: simulate random doc assignment without actually calling DocRouter,
+        // which adds significant overhead
+
+        int totalAdded = 0;
+        for (int i = 0; i < slices.length; i++) {
+          Slice s = slices[i];
+          long count = (long) docCount * ((long) s.getRange().max - (long) s.getRange().min) / 0x100000000L;
+          perSlice[i] = (int) count;
+          totalAdded += perSlice[i];
         }
-        docCount++;
+        // loss of precision due to integer math
+        int diff = docCount - totalAdded;
+        if (diff > 0) {
+          // spread the remainder more or less equally
+          int perRemain = diff / slices.length;
+          int remainder = diff % slices.length;
+          int remainderSlice = slices.length > 1 ? bulkUpdateRandom.nextInt(slices.length) : 0;
+          for (int i = 0; i < slices.length; i++) {
+            perSlice[i] += perRemain;
+            if (i == remainderSlice) {
+              perSlice[i] += remainder;
+            }
+          }
+        }
+        for (int i = 0; i < slices.length; i++) {
+          Slice s = slices[i];
+          Replica leader = s.getLeader();
+          if (leader == null) {
+            log.debug("-- no leader in " + s);
+            continue;
+          }
+          metricUpdates.computeIfAbsent(s.getName(), sh -> new HashMap<>())
+              .computeIfAbsent(leader.getCoreName(), cn -> new AtomicLong())
+              .addAndGet(perSlice[i]);
+          modified = true;
+          AtomicLong bufferedUpdates = (AtomicLong)s.getProperties().get(BUFFERED_UPDATES);
+          if (bufferedUpdates != null) {
+            bufferedUpdates.addAndGet(perSlice[i]);
+            continue;
+          }
+          docUpdates.computeIfAbsent(s.getName(), sh -> new AtomicLong())
+              .addAndGet(perSlice[i]);
+        }
+      } else {
+        // SMALL UPDATE: use exact assignment via DocRouter
+        for (SolrInputDocument doc : docs) {
+          String id = (String) doc.getFieldValue("id");
+          if (id == null) {
+            throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Document without id: " + doc);
+          }
+          Slice s = coll.getRouter().getTargetSlice(id, doc, null, null, coll);
+          Replica leader = s.getLeader();
+          if (leader == null) {
+            log.debug("-- no leader in " + s);
+            continue;
+          }
+          metricUpdates.computeIfAbsent(s.getName(), sh -> new HashMap<>())
+              .computeIfAbsent(leader.getCoreName(), cn -> new AtomicLong())
+              .incrementAndGet();
+          modified = true;
+          AtomicLong bufferedUpdates = (AtomicLong)s.getProperties().get(BUFFERED_UPDATES);
+          if (bufferedUpdates != null) {
+            bufferedUpdates.incrementAndGet();
+            continue;
+          }
+          docUpdates.computeIfAbsent(s.getName(), sh -> new AtomicLong())
+              .incrementAndGet();
+        }
       }
-      int initialSlice = cloudManager.getRandom().nextInt(slices.length);
-      for (int i = 0; i < slices.length; i++) {
-        long addDocs = perSlice;
-        if (i == 0) {
-          addDocs += remainder;
-        }
-        int sliceNum = (initialSlice + i) % slices.length;
-        Slice s = slices[sliceNum];
-        if (s.getState() != Slice.State.ACTIVE) {
-          log.debug("-- slice not active: {}", s);
-        }
-        Replica leader = s.getLeader();
-        if (leader == null) {
-          log.debug("-- no leader in " + s);
-          continue;
-        }
-        metricUpdates.computeIfAbsent(s.getName(), sh -> new HashMap<>())
-            .computeIfAbsent(leader.getCoreName(), cn -> new AtomicLong())
-            .addAndGet(addDocs);
-        AtomicLong bufferedUpdates = (AtomicLong)s.getProperties().get(BUFFERED_UPDATES);
-        if (bufferedUpdates != null) {
-          bufferedUpdates.addAndGet(addDocs);
-          continue;
-        }
-        docUpdates.computeIfAbsent(s.getName(), sh -> new AtomicLong())
-            .addAndGet(addDocs);
-      }
-      if (docCount > 0) {
+
+      if (modified) {
         lock.lockInterruptibly();
         try {
           docUpdates.forEach((sh, count) -> {

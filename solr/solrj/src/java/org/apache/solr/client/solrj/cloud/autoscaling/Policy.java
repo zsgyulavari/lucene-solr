@@ -94,6 +94,7 @@ public class Policy implements MapWriter {
   final List<Pair<String, Type>> params;
   final List<String> perReplicaAttributes;
   final int zkVersion;
+  final boolean empty;
 
   public Policy() {
     this(Collections.emptyMap());
@@ -104,6 +105,7 @@ public class Policy implements MapWriter {
   }
   @SuppressWarnings("unchecked")
   public Policy(Map<String, Object> jsonMap, int version) {
+    this.empty = jsonMap.get(CLUSTER_PREFERENCES) == null && jsonMap.get(CLUSTER_POLICY) == null && jsonMap.get(POLICIES) == null;
     this.zkVersion = version;
     int[] idx = new int[1];
     List<Preference> initialClusterPreferences = ((List<Map<String, Object>>) jsonMap.getOrDefault(CLUSTER_PREFERENCES, emptyList())).stream()
@@ -156,6 +158,7 @@ public class Policy implements MapWriter {
   }
 
   private Policy(Map<String, List<Clause>> policies, List<Clause> clusterPolicy, List<Preference> clusterPreferences, int version) {
+    this.empty = policies == null && clusterPolicy == null && clusterPreferences == null;
     this.zkVersion = version;
     this.policies = policies != null ? Collections.unmodifiableMap(policies) : Collections.emptyMap();
     this.clusterPolicy = clusterPolicy != null ? Collections.unmodifiableList(clusterPolicy) : Collections.emptyList();
@@ -281,11 +284,16 @@ public class Policy implements MapWriter {
             return p.compare(r1, r2, false);
           });
         } catch (Exception e) {
+//          log.error("Exception! prefs = {}, recent r1 = {}, r2 = {}, matrix = {}",
+//              clusterPreferences,
+//              lastComparison[0],
+//              lastComparison[1],
+//              Utils.toJSONString(Utils.getDeepCopy(tmpMatrix, 6, false)));
           log.error("Exception! prefs = {}, recent r1 = {}, r2 = {}, matrix = {}",
               clusterPreferences,
-              lastComparison[0],
-              lastComparison[1],
-              Utils.toJSONString(Utils.getDeepCopy(tmpMatrix, 6, false)));
+              lastComparison[0].node,
+              lastComparison[1].node,
+              matrix.size());
           throw e;
         }
         p.setApproxVal(tmpMatrix);
@@ -459,6 +467,10 @@ public class Policy implements MapWriter {
   @Override
   public String toString() {
     return Utils.toJSONString(this);
+  }
+
+  public boolean isEmpty() {
+    return empty;
   }
 
   /*This stores the logical state of the system, given a policy and
