@@ -360,7 +360,13 @@ public class SimCloudManager implements SolrCloudManager {
     Set<String> deadNodes = getSimNodeStateProvider().simGetDeadNodes();
     sb.append("## Dead nodes:\t\t" + deadNodes.size() + "\n");
     deadNodes.forEach(n -> sb.append("##\t\t" + n + "\n"));
-    sb.append("## Collections:\t" + getSimClusterStateProvider().simListCollections() + "\n");
+    sb.append("## Collections:\n");
+      clusterStateProvider.simGetCollectionStats().forEach((coll, stats) -> {
+        sb.append("##  * ").append(coll).append('\n');
+        stats.forEach((k, v) -> {
+          sb.append("##    " + k + "\t" + v + "\n");
+        });
+      });
     if (withCollections) {
       ClusterState state = clusterStateProvider.getClusterState();
       state.forEachCollection(coll -> sb.append(coll.toString() + "\n"));

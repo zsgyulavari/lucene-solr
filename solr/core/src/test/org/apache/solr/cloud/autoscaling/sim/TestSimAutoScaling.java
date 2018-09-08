@@ -26,17 +26,17 @@ import static org.apache.solr.cloud.autoscaling.AutoScalingHandlerTest.createAut
  *
  */
 @TimeoutSuite(millis = 48 * 3600 * 1000)
-@LogLevel("org.apache.solr.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.NodeLostTrigger=INFO;org.apache.client.solrj.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.ComputePlanAction=INFO;org.apache.solr.cloud.autoscaling.ExecutePlanAction=INFO;org.apache.solr.cloud.autoscaling.ScheduledTriggers=INFO")
+@LogLevel("org.apache.solr.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.NodeLostTrigger=INFO;org.apache.client.solrj.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.ComputePlanAction=INFO;org.apache.solr.cloud.autoscaling.ExecutePlanAction=DEBUG;org.apache.solr.cloud.autoscaling.ScheduledTriggers=INFO")
 //@LogLevel("org.apache.solr.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.NodeLostTrigger=INFO;org.apache.client.solrj.cloud.autoscaling=DEBUG;org.apache.solr.cloud.CloudTestUtils=TRACE")
 public class TestSimAutoScaling extends SimSolrCloudTestCase {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-  private static final int SPEED = 50;
-  private static final int NUM_NODES = 50;
+  private static final int SPEED = 500;
+  private static final int NUM_NODES = 200;
 
-  private static final long BATCH_SIZE = 8000000;
-  private static final long NUM_BATCHES = 100000;
-  private static final long ABOVE_SIZE = 2000000;
+  private static final long BATCH_SIZE = 20000;
+  private static final long NUM_BATCHES = 10000000;
+  private static final long ABOVE_SIZE = 10000000;
 
 
   private static TimeSource timeSource;
@@ -59,7 +59,8 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
     CloudTestUtils.waitForState(cluster, "failed to create " + collectionName, collectionName,
         CloudTestUtils.clusterShape(2, 2, false, true));
 
-    long waitForSeconds = 3 + random().nextInt(5);
+    //long waitForSeconds = 3 + random().nextInt(5);
+    long waitForSeconds = 1;
     String setTriggerCommand = "{" +
         "'set-trigger' : {" +
         "'name' : 'scaleUpTrigger'," +
@@ -76,8 +77,8 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
 
     long batchSize = BATCH_SIZE;
     for (long i = 0; i < NUM_BATCHES; i++) {
-      log.info(String.format("#### Total docs so far: %,d", (i * batchSize)));
       addDocs(collectionName, i * batchSize, batchSize);
+      log.info(String.format("#### Total docs so far: %,d", ((i + 1) * batchSize)));
       timeSource.sleep(waitForSeconds);
     }
   }

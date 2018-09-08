@@ -26,12 +26,14 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Random;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -42,6 +44,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
 import com.google.common.util.concurrent.AtomicDouble;
+import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
 import org.apache.solr.client.solrj.cloud.DistribStateManager;
 import org.apache.solr.client.solrj.cloud.autoscaling.AutoScalingConfig;
 import org.apache.solr.client.solrj.cloud.autoscaling.Policy;
@@ -1216,13 +1219,10 @@ public class SimClusterStateProvider implements ClusterStateProvider {
         // apply buffered updates
         long perShard = bufferedUpdates.get() / subSlices.size();
         long remainder = bufferedUpdates.get() % subSlices.size();
-        String subSlice = null;
-        for (String sub : subSlices) {
+        for (int i = 0; i < subSlices.size(); i++) {
+          String sub = subSlices.get(i);
           long numUpdates = perShard;
-          if (subSlice == null) {
-            subSlice = sub;
-          }
-          if (subSlice.equals(sub)) {
+          if (i == 0) {
             numUpdates += remainder;
           }
           simSetShardValue(collectionName, sub, "SEARCHER.searcher.numDocs", numUpdates, true, false);
@@ -1437,6 +1437,7 @@ public class SimClusterStateProvider implements ClusterStateProvider {
       it = req.getDocIterator();
       if (it != null) {
         while (it.hasNext()) {
+          it.next();
           docCount++;
         }
       }
@@ -1834,6 +1835,93 @@ public class SimClusterStateProvider implements ClusterStateProvider {
    */
   public List<String> simListCollections() throws InterruptedException {
     return new ArrayList<>(colShardReplicaMap.keySet());
+  }
+
+  public Map<String, Map<String, Object>> simGetCollectionStats() throws IOException {
+    Map<String, Map<String, Object>> stats = new TreeMap<>();
+    ClusterState state = getClusterState();
+    state.forEachCollection(coll -> {
+      Map<String, Object> perColl = new LinkedHashMap<>();
+      stats.put(coll.getName(), perColl);
+      perColl.put("shardsTotal", coll.getSlices().size());
+      Map<String, AtomicInteger> shardState = new TreeMap<>();
+      int noLeader = 0;
+
+      SummaryStatistics docs = new SummaryStatistics();
+      SummaryStatistics bytes = new SummaryStatistics();
+      SummaryStatistics inactiveDocs = new SummaryStatistics();
+      SummaryStatistics inactiveBytes = new SummaryStatistics();
+
+      long deletedDocs = 0;
+      int totalReplicas = 0;
+      int activeReplicas = 0;
+
+      for (Slice s : coll.getSlices()) {
+        shardState.computeIfAbsent(s.getState().toString(), st -> new AtomicInteger())
+            .incrementAndGet();
+        totalReplicas += s.getReplicas().size();
+        if (s.getState() != Slice.State.ACTIVE) {
+          if (!s.getReplicas().isEmpty()) {
+            ReplicaInfo ri = getReplicaInfo(s.getReplicas().iterator().next());
+            if (ri != null) {
+              Number numDocs = (Number)ri.getVariable("SEARCHER.searcher.numDocs");
+              Number numBytes = (Number)ri.getVariable("INDEX.sizeInBytes");
+              inactiveDocs.addValue(numDocs.doubleValue());
+              inactiveBytes.addValue(numBytes.doubleValue());
+            }
+          }
+          continue;
+        }
+        activeReplicas += s.getReplicas().size();
+        Replica leader = s.getLeader();
+        if (leader == null) {
+          noLeader++;
+          if (!s.getReplicas().isEmpty()) {
+            leader = s.getReplicas().iterator().next();
+          }
+        }
+        ReplicaInfo ri = null;
+        if (leader != null) {
+          ri = getReplicaInfo(leader);
+          if (ri == null) {
+            log.warn("Unknown ReplicaInfo for {}", leader);
+          }
+        }
+        if (ri != null) {
+          Number numDocs = (Number)ri.getVariable("SEARCHER.searcher.numDocs");
+          Number delDocs = (Number)ri.getVariable("SEARCHER.searcher.deleteDocs");
+          Number numBytes = (Number)ri.getVariable("INDEX.sizeInBytes");
+          docs.addValue(numDocs.doubleValue());
+          if (delDocs != null) {
+            deletedDocs += delDocs.longValue();
+          }
+          bytes.addValue(numBytes.doubleValue());
+        }
+      }
+      perColl.put("shardsState", shardState);
+      perColl.put("  shardsWithoutLeader", noLeader);
+      perColl.put("totalReplicas", totalReplicas);
+      perColl.put("  activeReplicas", activeReplicas);
+      perColl.put("  inactiveReplicas", totalReplicas - activeReplicas);
+      perColl.put("totalActiveDocs", String.format("%,d", (long)docs.getSum()));
+      perColl.put("  maxActiveSliceDocs", String.format("%,d", (long)docs.getMax()));
+      perColl.put("  minActiveSliceDocs", String.format("%,d", (long)docs.getMin()));
+      perColl.put("  avgActiveSliceDocs", String.format("%,.0f", docs.getMean()));
+      perColl.put("totalInactiveDocs", String.format("%,d", (long)inactiveDocs.getSum()));
+      perColl.put("  maxInactiveSliceDocs", String.format("%,d", (long)inactiveDocs.getMax()));
+      perColl.put("  minInactiveSliceDocs", String.format("%,d", (long)inactiveDocs.getMin()));
+      perColl.put("  avgInactiveSliceDocs", String.format("%,.0f", inactiveDocs.getMean()));
+      perColl.put("totalActiveBytes", String.format("%,d", (long)bytes.getSum()));
+      perColl.put("  maxActiveSliceBytes", String.format("%,d", (long)bytes.getMax()));
+      perColl.put("  minActiveSliceBytes", String.format("%,d", (long)bytes.getMin()));
+      perColl.put("  avgActiveSliceBytes", String.format("%,.0f", bytes.getMean()));
+      perColl.put("totalInactiveBytes", String.format("%,d", (long)inactiveBytes.getSum()));
+      perColl.put("  maxInactiveSliceBytes", String.format("%,d", (long)inactiveBytes.getMax()));
+      perColl.put("  minInactiveSliceBytes", String.format("%,d", (long)inactiveBytes.getMin()));
+      perColl.put("  avgInactiveSliceBytes", String.format("%,.0f", inactiveBytes.getMean()));
+      perColl.put("totalActiveDeletedDocs", String.format("%,d", deletedDocs));
+    });
+    return stats;
   }
 
   // interface methods

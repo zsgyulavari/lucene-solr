@@ -294,7 +294,7 @@ public class Policy implements MapWriter {
               lastComparison[0].node,
               lastComparison[1].node,
               matrix.size());
-          throw e;
+          throw new RuntimeException(e.getMessage());
         }
         p.setApproxVal(tmpMatrix);
       }
