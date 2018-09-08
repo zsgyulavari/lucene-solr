@@ -1,4 +1,4 @@
-                      Apache Solr Release Notes
+                              Apache Solr Release Notes
 
 Introduction
 ------------
@@ -100,11 +100,6 @@ Upgrade Notes
   WINDOWS USERS: This JIRA corrects a bug in the start scripts that put example logs under ...\server, solr.log is
   now under ...\example. (Erick Erickson)
 
-* SOLR-12055: Enable async logging by default. This change improves throughput for logging. This opens
-  up a small window where log messages could possibly be lost. If this is unacceptable, switching back to synchronous
-  logging can be done by changing the log4j2.xml files, no internal Solr code changed to make async logging the default.
-  (Erick Erickson)
-
 
 New Features
 ----------------------
@@ -197,6 +192,27 @@ New Features
 
 * SOLR-12715: NodeAddedTrigger should support adding replicas to new nodes by setting preferredOperation=addreplica.
   (shalin)
+
+* SOLR-11861: When creating a configSet via the API, the "baseConfigSet" parameter now defaults to "_default".
+  (Amrit Sarkar, David Smiley)
+
+* SOLR-12716: NodeLostTrigger should support deleting replicas from lost nodes by setting preferredOperation=deletenode.
+  (shalin)
+
+* SOLR-12722: The [child] transformer now takes an 'fl' param to specify which fields to return.  It will evaluate
+  doc transformers if present.  In 7.5 a missing 'fl' defaults to the current behavior of all fields, but in 8.0
+  defaults to the top/request "fl". (Moshe Bla, David Smiley)
+
+* SOLR-9418: Added a new (experimental) PhrasesIdentificationComponent for identifying potential phrases
+  in query input based on overlapping shingles in the index. (Akash Mehta, Trey Grainger, hossman)
+
+* SOLR-11943: Add machine learning functions for location data (Joel Bernstein)
+
+* SOLR-12612: Cluster properties restriction of known keys only is relaxed, and now unknown properties starting with "ext."
+  will be allowed. This allows custom to plugins set their own cluster properties. (Jeffery Yuan via Tomás Fernández Löbbe)
+
+* SOLR-12357: Time Routed Aliases now have a preemptiveCreateMath option to preemptively and asynchronously create the
+  next collection in advance as new data gets within this time window of the end. (Gus Heck, David Smiley)
 
 Bug Fixes
 ----------------------
@@ -301,7 +317,7 @@ Bug Fixes
 * SOLR-12704: Guard AddSchemaFieldsUpdateProcessorFactory against null field names and field values.
   (Steve Rowe, Varun Thacker)
 
-* SOLR-12728: RequestLoggingTest fails on occasion, not reproducible (Erick Erickson)
+* SOLR-12733: SolrMetricReporterTest failure (Erick Erickson, David Smiley)
 
 Optimizations
 ----------------------
@@ -396,6 +412,11 @@ Other Changes
 
 * SOLR-12590: Improve Solr resource loader coverage in the ref guide.
   (Steve Rowe, Cassandra Targett, Christine Poerschke)
+
+* SOLR-12744: Improve logging messages and verbosity around recoveries (Cao Manh Dat, Varun Thacker)
+
+* SOLR-8742: In HdfsDirectoryTest replace RAMDirectory usages with ByteBuffersDirectory. 
+  (hossman, Mark Miller, Andrzej Bialecki, Steve Rowe)
 
 ==================  7.4.0 ==================
 
