@@ -26,7 +26,7 @@ import static org.apache.solr.cloud.autoscaling.AutoScalingHandlerTest.createAut
  *
  */
 @TimeoutSuite(millis = 48 * 3600 * 1000)
-@LogLevel("org.apache.solr.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.NodeLostTrigger=INFO;org.apache.client.solrj.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.ComputePlanAction=INFO;org.apache.solr.cloud.autoscaling.ExecutePlanAction=DEBUG;org.apache.solr.cloud.autoscaling.ScheduledTriggers=INFO")
+@LogLevel("org.apache.solr.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.NodeLostTrigger=INFO;org.apache.client.solrj.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.ComputePlanAction=INFO;org.apache.solr.cloud.autoscaling.ExecutePlanAction=DEBUG;org.apache.solr.cloud.autoscaling.ScheduledTriggers=DEBUG")
 //@LogLevel("org.apache.solr.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.NodeLostTrigger=INFO;org.apache.client.solrj.cloud.autoscaling=DEBUG;org.apache.solr.cloud.CloudTestUtils=TRACE")
 public class TestSimAutoScaling extends SimSolrCloudTestCase {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
@@ -34,9 +34,9 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
   private static final int SPEED = 500;
   private static final int NUM_NODES = 200;
 
-  private static final long BATCH_SIZE = 20000;
-  private static final long NUM_BATCHES = 10000000;
-  private static final long ABOVE_SIZE = 10000000;
+  private static final long BATCH_SIZE = 2000000;
+  private static final long NUM_BATCHES = 500000;
+  private static final long ABOVE_SIZE = 20000000;
 
 
   private static TimeSource timeSource;
@@ -81,6 +81,7 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
       log.info(String.format("#### Total docs so far: %,d", ((i + 1) * batchSize)));
       timeSource.sleep(waitForSeconds);
     }
+    timeSource.sleep(60000);
   }
 
   private void addDocs(String collection, long start, long count) throws Exception {
