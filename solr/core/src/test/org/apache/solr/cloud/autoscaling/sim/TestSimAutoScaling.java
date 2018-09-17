@@ -15,6 +15,7 @@ import org.apache.solr.common.SolrInputField;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.TimeSource;
 import org.apache.solr.util.LogLevel;
+import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.slf4j.Logger;
@@ -34,8 +35,8 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
   private static final int SPEED = 500;
   private static final int NUM_NODES = 200;
 
-  private static final long BATCH_SIZE = 2000000;
-  private static final long NUM_BATCHES = 500000;
+  private static final long BATCH_SIZE = 200000;
+  private static final long NUM_BATCHES = 5000000;
   private static final long ABOVE_SIZE = 20000000;
 
 
@@ -48,6 +49,11 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
     timeSource = cluster.getTimeSource();
     solrClient = cluster.simGetSolrClient();
     cluster.simSetUseSystemCollection(false);
+  }
+
+  @AfterClass
+  public static void tearDownCluster() throws Exception {
+    solrClient = null;
   }
 
   @Test
