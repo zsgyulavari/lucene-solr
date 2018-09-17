@@ -1873,8 +1873,12 @@ public class SimClusterStateProvider implements ClusterStateProvider {
               if (ri != null) {
                 Number numDocs = (Number)ri.getVariable("SEARCHER.searcher.numDocs");
                 Number numBytes = (Number)ri.getVariable("INDEX.sizeInBytes");
-                inactiveDocs.addValue(numDocs.doubleValue());
-                inactiveBytes.addValue(numBytes.doubleValue());
+                if (numDocs != null) {
+                  inactiveDocs.addValue(numDocs.doubleValue());
+                }
+                if (numBytes != null) {
+                  inactiveBytes.addValue(numBytes.doubleValue());
+                }
               }
             }
             continue;
@@ -1902,11 +1906,15 @@ public class SimClusterStateProvider implements ClusterStateProvider {
             Number numDocs = (Number)ri.getVariable("SEARCHER.searcher.numDocs");
             Number delDocs = (Number)ri.getVariable("SEARCHER.searcher.deleteDocs");
             Number numBytes = (Number)ri.getVariable("INDEX.sizeInBytes");
-            docs.addValue(numDocs.doubleValue());
+            if (numDocs != null) {
+              docs.addValue(numDocs.doubleValue());
+            }
             if (delDocs != null) {
               deletedDocs += delDocs.longValue();
             }
-            bytes.addValue(numBytes.doubleValue());
+            if (numBytes != null) {
+              bytes.addValue(numBytes.doubleValue());
+            }
           }
         }
         perColl.put("shardsState", shardState);
