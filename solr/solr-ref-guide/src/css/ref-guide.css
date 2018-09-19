@@ -483,7 +483,7 @@ table.tableblock > .title
 }
 
 #toctitle,
-.sidebarblock > .content > .title,
+.sidebarblock > .title,
 blockquote,
 dd,
 div,
@@ -538,7 +538,7 @@ p aside
 }
 
 #toctitle,
-.sidebarblock > .content > .title,
+.sidebarblock > .title,
 h1,
 h2,
 h3,
@@ -560,7 +560,7 @@ h6
 }
 
 #toctitle small,
-.sidebarblock > .content > .title small,
+.sidebarblock > .title small,
 h1 small,
 h2 small,
 h3 small,
@@ -574,7 +574,7 @@ h6 small
 }
 
 /* Pad the page title and sidebar header */
-h1.title-main,
+h1.post-title-main,
 li.sidebarTitle {
   padding-top: 20px;
 }
@@ -590,7 +590,7 @@ h2
 }
 
 #toctitle,
-.sidebarblock > .content > .title,
+.sidebarblock > .title,
 h3
 {
     font-size: 1.375em;
@@ -761,7 +761,7 @@ blockquote p
        and (min-width : 768px)
 {
     #toctitle,
-    .sidebarblock > .content > .title,
+    .sidebarblock > .title,
     h1,
     h2,
     h3,
@@ -783,7 +783,7 @@ blockquote p
     }
 
     #toctitle,
-    .sidebarblock > .content > .title,
+    .sidebarblock > .title,
     h3
     {
         font-size: 1.6875em;
@@ -846,7 +846,7 @@ table tr td
 }
 
 #toctitle strong,
-.sidebarblock > .content > .title strong,
+.sidebarblock > .title strong,
 h1 strong,
 h2 strong,
 h3 strong,
@@ -1365,7 +1365,7 @@ nav.toc >ul::before {
 
 #content h1 > a.anchor,
 #toctitle > a.anchor,
-.sidebarblock > .content > .title > a.anchor,
+.sidebarblock > .title > a.anchor,
 h2 > a.anchor,
 h3 > a.anchor,
 h4 > a.anchor,
@@ -1385,7 +1385,7 @@ h6 > a.anchor
 
 #content h1 > a.anchor:before,
 #toctitle > a.anchor:before,
-.sidebarblock > .content > .title > a.anchor:before,
+.sidebarblock > .title > a.anchor:before,
 h2 > a.anchor:before,
 h3 > a.anchor:before,
 h4 > a.anchor:before,
@@ -1402,8 +1402,8 @@ h6 > a.anchor:before
 #content h1 > a.anchor:hover,
 #toctitle:hover > a.anchor,
 #toctitle > a.anchor:hover,
-.sidebarblock > .content > .title:hover > a.anchor,
-.sidebarblock > .content > .title > a.anchor:hover,
+.sidebarblock > .title:hover > a.anchor,
+.sidebarblock > .title > a.anchor:hover,
 h2:hover > a.anchor,
 h2 > a.anchor:hover,
 h3:hover > a.anchor,
@@ -1420,7 +1420,7 @@ h6 > a.anchor:hover
 
 #content h1 > a.link,
 #toctitle > a.link,
-.sidebarblock > .content > .title > a.link,
+.sidebarblock > .title > a.link,
 h2 > a.link,
 h3 > a.link,
 h4 > a.link,
@@ -1433,7 +1433,7 @@ h6 > a.link
 
 #content h1 > a.link:hover,
 #toctitle > a.link:hover,
-.sidebarblock > .content > .title > a.link:hover,
+.sidebarblock > .title > a.link:hover,
 h2 > a.link:hover,
 h3 > a.link:hover,
 h4 > a.link:hover,
@@ -1513,24 +1513,25 @@ table.tableblock #preamble > .sectionbody > .paragraph:first-of-type p
     margin-bottom: 0;
 }
 
-.exampleblock > .content
+.exampleblock
 {
     margin-bottom: 1.25em;
     padding: 0 1em 1em 1em;
     border-width: 1px;
     border-style: solid;
     border-color: #e6e6e6;
-    -webkit-border-radius: 4px;
-            border-radius: 4px;
+    background-color: transparent;
+    -webkit-box-shadow: 0 1px 4px #e0e0dc;
+            box-shadow: 0 1px 4px #e0e0dc;
     background: #fff;
 }
 
-.exampleblock > .content > :first-child
+.exampleblock > :first-child
 {
     margin-top: 0;
 }
 
-.exampleblock > .content > :last-child
+.exampleblock > :last-child
 {
     margin-bottom: 0;
 }
@@ -1566,14 +1567,14 @@ h6.block-title
     font-size: 1.6875em;
 }
 
-.exampleblock > .content > :last-child>:last-child,
-.exampleblock > .content .olist > ol > li:last-child>:last-child,
-.exampleblock > .content .qlist > ol > li:last-child>:last-child,
-.exampleblock > .content .ulist > ul > li:last-child>:last-child,
-.sidebarblock > .content > :last-child>:last-child,
-.sidebarblock > .content .olist > ol > li:last-child>:last-child,
-.sidebarblock > .content .qlist > ol > li:last-child>:last-child,
-.sidebarblock > .content .ulist > ul > li:last-child>:last-child
+.exampleblock > :last-child>:last-child,
+.exampleblock > .olist > ol > li:last-child>:last-child,
+.exampleblock > .qlist > ol > li:last-child>:last-child,
+.exampleblock > .ulist > ul > li:last-child>:last-child,
+.sidebarblock > :last-child>:last-child,
+.sidebarblock > .olist > ol > li:last-child>:last-child,
+.sidebarblock > .qlist > ol > li:last-child>:last-child,
+.sidebarblock > .ulist > ul > li:last-child>:last-child
 {
     margin-bottom: 0;
 }
@@ -1668,7 +1669,7 @@ h6.block-title
     border-width: 0;
 }
 
-.listingblock > .content
+.listingblock
 {
     position: relative;
 }
@@ -2662,14 +2663,6 @@ p.tableblock
     font-size: 1em;
 }
 
-.exampleblock > .content
-{
-    border-color: #e0e0dc;
-    background-color: transparent;
-    -webkit-box-shadow: 0 1px 4px #e0e0dc;
-            box-shadow: 0 1px 4px #e0e0dc;
-}
-
 .print-only
 {
     display: none!important;
@@ -2745,7 +2738,7 @@ p.tableblock
     }
 
     #toc,
-    .exampleblock > .content,
+    .exampleblock,
     .sidebarblock
     {
         background: none!important;
