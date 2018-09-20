@@ -461,6 +461,7 @@ p.lead
 .exampleblock > .title,
 .hdlist > .title,
 .imageblock > .title,
+.imageblock > figcaption,
 .listingblock > .title,
 .literalblock > .title,
 .olist > .title,
@@ -574,7 +575,7 @@ h6 small
 }
 
 /* Pad the page title and sidebar header */
-h1.post-title-main,
+h1.title-main,
 li.sidebarTitle {
   padding-top: 20px;
 }
@@ -662,6 +663,7 @@ ul li ul
     margin-bottom: 0;
     margin-left: .25em;
     font-size: 1em;
+    padding-left: 10px;
 }
 
 ul.circle li ul,
