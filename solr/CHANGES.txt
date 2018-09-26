@@ -71,6 +71,8 @@ Other Changes
   java.time.DateTimeFormatter instead of Joda time (see upgrade notes).  "Lenient" is enabled.  Removed Joda Time dependency.
   (David Smiley, Bar Rotstein)
 
+* SOLR-12805: Store previous term (generation) of replica when start recovery process (Cao Manh Dat)
+
 ==================  7.6.0 ==================
 
 Consult the LUCENE_CHANGES.txt file for additional, low level, changes in this release.
@@ -83,6 +85,19 @@ Velocity 1.7 and Velocity Tools 2.0
 Apache ZooKeeper 3.4.11
 Jetty 9.4.11.v20180605
 
+New Features
+----------------------
+
+* SOLR-6280: {!collapse}: if you attempt to use CollapseQParser on a field that is multi-valued, you will now get an
+  error.  Previously, the collapsing behavior was unreliable and undefined despite no explicit error.
+  (Munendra S N, David Smiley)
+
+* SOLR-9317: ADDREPLICA command should be able to add more than one replica to a collection,shard at a time.
+  The API now supports 'nrtReplicas', 'tlogReplicas', 'pullReplicas' parameters as well 'createNodeSet' parameter.
+  As part of this change, the CREATESHARD API now delegates placing replicas entirely to the ADDREPLICA command
+  and uses the new parameters to add all the replicas in one API call. (shalin)
+
+* SOLR-11522: /autoscaling/suggestions now include rebalance options as well even if there are no violations (noble)
 
 Other Changes
 ----------------------
@@ -90,6 +105,13 @@ Other Changes
 * SOLR-12762: Fix javadoc for SolrCloudTestCase.clusterShape() method and add a method that validates only against
   Active slices (Anshum Gupta)
 
+Bug Fixes
+----------------------
+
+* SOLR-11836: FacetStream works with bucketSizeLimit of -1 which will fetch all the buckets.
+  (Alfonso Muñoz-Pomer Fuentes, Amrit Sarkar via Varun Thacker)
+
+* SOLR-12776: Setting of TMP in solr.cmd causes invisibility of Solr to JDK tools (Petr Bodnar via Erick Erickson)
 
 ==================  7.5.0 ==================
 
@@ -346,8 +368,7 @@ Bug Fixes
 
 * SOLR-12733: SolrMetricReporterTest failure (Erick Erickson, David Smiley)
 
-* SOLR-11836: FacetStream works with bucketSizeLimit of -1 which will fetch all the buckets.
-  (Alfonso Muñoz-Pomer Fuentes, Amrit Sarkar via Varun Thacker)
+* SOLR-12765: Incorrect format of JMX cache stats. (Bojan Smid, ab)
 
 Optimizations
 ----------------------
@@ -443,6 +464,8 @@ Other Changes
 
 * SOLR-8742: In HdfsDirectoryTest replace RAMDirectory usages with ByteBuffersDirectory.
   (hossman, Mark Miller, Andrzej Bialecki, Steve Rowe)
+  
+* SOLR-12771: Improve Autoscaling Policy and Preferences documentation. (hossman, Steve Rowe)
 
 ==================  7.4.0 ==================
 
