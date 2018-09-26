@@ -1,7 +1,24 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.solr.cloud.autoscaling.sim;
 
 import java.lang.invoke.MethodHandles;
 import java.util.Iterator;
+import java.util.Locale;
 
 import com.carrotsearch.randomizedtesting.annotations.TimeoutSuite;
 import org.apache.solr.client.solrj.SolrClient;
@@ -31,7 +48,7 @@ import static org.apache.solr.cloud.autoscaling.AutoScalingHandlerTest.createAut
 @TimeoutSuite(millis = 48 * 3600 * 1000)
 @LogLevel("org.apache.solr.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.NodeLostTrigger=INFO;org.apache.client.solrj.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.ComputePlanAction=INFO;org.apache.solr.cloud.autoscaling.ExecutePlanAction=DEBUG;org.apache.solr.cloud.autoscaling.ScheduledTriggers=DEBUG")
 //@LogLevel("org.apache.solr.cloud.autoscaling=DEBUG;org.apache.solr.cloud.autoscaling.NodeLostTrigger=INFO;org.apache.client.solrj.cloud.autoscaling=DEBUG;org.apache.solr.cloud.CloudTestUtils=TRACE")
-public class TestSimAutoScaling extends SimSolrCloudTestCase {
+public class TestSimExtremeIndexing extends SimSolrCloudTestCase {
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private static final int SPEED = 500;
@@ -86,7 +103,7 @@ public class TestSimAutoScaling extends SimSolrCloudTestCase {
     long batchSize = BATCH_SIZE;
     for (long i = 0; i < NUM_BATCHES; i++) {
       addDocs(collectionName, i * batchSize, batchSize);
-      log.info(String.format("#### Total docs so far: %,d", ((i + 1) * batchSize)));
+      log.info(String.format(Locale.ROOT, "#### Total docs so far: %,d", ((i + 1) * batchSize)));
       timeSource.sleep(waitForSeconds);
     }
     timeSource.sleep(60000);
