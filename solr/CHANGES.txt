@@ -82,7 +82,7 @@ Other Changes
 * SOLR-12586: Upgrade ParseDateFieldUpdateProcessorFactory (present in "schemaless mode") to use Java 8's
   java.time.DateTimeFormatter instead of Joda time (see upgrade notes).  "Lenient" is enabled.  Removed Joda Time dependency.
   (David Smiley, Bar Rotstein)
-  
+
 * SOLR-5163: edismax now throws an exception when qf refers to a nonexistent field (Charles Sanders, David Smiley)
 
 * SOLR-12805: Store previous term (generation) of replica when start recovery process (Cao Manh Dat)
@@ -93,7 +93,7 @@ Other Changes
 
 * SOLR-11812: Remove backward compatibility of old LIR implementation in 8.0 (Cao Manh Dat)
 
-* SOLR-12620: Remove the Admin UI Cloud -> Graph (Radial) view (janhoy) 
+* SOLR-12620: Remove the Admin UI Cloud -> Graph (Radial) view (janhoy)
 
 ==================  7.6.0 ==================
 
@@ -565,7 +565,7 @@ Other Changes
 
 * SOLR-8742: In HdfsDirectoryTest replace RAMDirectory usages with ByteBuffersDirectory.
   (hossman, Mark Miller, Andrzej Bialecki, Steve Rowe)
-  
+
 * SOLR-12771: Improve Autoscaling Policy and Preferences documentation. (hossman, Steve Rowe)
 
 ==================  7.4.0 ==================
