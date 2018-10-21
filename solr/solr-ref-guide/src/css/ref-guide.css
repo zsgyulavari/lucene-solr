@@ -1,12 +1,10 @@
 /* Load Noto Sans for body and header text */
-@font-face
-{
+@font-face {
     font-family: 'Noto Sans';
     src: url(../fonts/Noto_Sans/NotoSans-Regular.ttf);
 }
 
-@font-face
-{
+@font-face {
     font-weight: bold;
     font-family: 'Noto Sans';
     src: url(../fonts/Noto_Sans/NotoSans-Bold.ttf);
@@ -35,44 +33,37 @@ hgroup,
 main,
 nav,
 section,
-summary
-{
+summary {
     display: block;
 }
 
 audio,
 canvas,
-video
-{
+video {
     display: inline-block;
 }
 
-audio:not([controls])
-{
+audio:not([controls]) {
     display: none;
     height: 0;
 }
 
 [hidden],
-template
-{
+template {
     display: none;
 }
 
-script
-{
+script {
     display: none!important;
 }
 
-html
-{
+html {
     font-family: 'Noto Sans', sans-serif;
     -ms-text-size-adjust: 100%;
     -webkit-text-size-adjust: 100%;
 }
 
-body
-{
+body {
     margin: 0;
 }
 
@@ -80,20 +71,17 @@ body.DRAFT {
     background-image: url("../images/draft-background.png");
 }
 
-a
-{
+a {
     background: transparent;
 }
 
-a:focus
-{
+a:focus {
     outline: thin dotted;
    outline-offset: -2px;
 }
 
 a:active,
-a:hover
-{
+a:hover {
     outline: 0;
 }
 
@@ -112,8 +100,7 @@ a[href^="https://"]:after {
 
 /* Strip the outbound icon when this class is present */
 a[href].noCrossRef::after,
-a.no_icon:after
- {
+a.no_icon:after {
     content:"" !important;
     padding-left: 0;
 }
@@ -128,6 +115,7 @@ ul#mysidebar li.sb-level3 a {
 ul#mysidebar li.sb-level4 a {
    padding-left: 40px;
 }
+
 /* we can style the 'current-tree' hierarchy in the sidebar independently of the 'active' page as
    the user clicks around expanding/collapsing the nav menus w/o clicking a link to load a diff page
 
@@ -147,14 +135,12 @@ ul#mysidebar li.current.active > a {
 }
 
 
-abbr[title]
-{
+abbr[title] {
     border-bottom: 1px dotted;
 }
 
 b,
-strong
-{
+strong {
     font-weight: bold;
 }
 
@@ -1172,19 +1158,18 @@ nav.toc ul li {
 
 nav.toc ul {
     background-color: #f1f1f1;;
-    padding: 0 5px;
+    padding: 5px;
     border-radius: 5px;
     color: gray;
 }
 
 nav.toc ul li ul {
-    padding-left:8px;
-
+    padding-left: 8px;
 }
 
 nav.toc ul li ul li {
     list-style: circle;
-    line-height: 1;
+    margin: 5px 0 0 0;
 }
 
 nav.toc.section-toc >ul::before {
