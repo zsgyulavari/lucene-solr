@@ -26,6 +26,7 @@ import java.util.Map;
 
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.LuceneTestCase.Slow;
+import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.client.solrj.embedded.JettySolrRunner;
 import org.apache.solr.client.solrj.io.SolrClientCache;
 import org.apache.solr.client.solrj.io.Tuple;
@@ -65,6 +66,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 @Slow
+@SolrTestCaseJ4.SuppressSSL
 @LuceneTestCase.SuppressCodecs({"Lucene3x", "Lucene40","Lucene41","Lucene42","Lucene45"})
 //commented 23-AUG-2018 @LuceneTestCase.BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // added 20-Jul-2018
 public class StreamDecoratorTest extends SolrCloudTestCase {
@@ -1565,6 +1567,7 @@ public class StreamDecoratorTest extends SolrCloudTestCase {
   }
 
   @Test
+  @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // 14-Oct-2018
   public void testParallelRollupStream() throws Exception {
 
     new UpdateRequest()
@@ -3296,7 +3299,7 @@ public class StreamDecoratorTest extends SolrCloudTestCase {
   }
 
   @Test
-  @LuceneTestCase.BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // 2-Aug-2018
+  //Commented 14-Oct-2018 @LuceneTestCase.BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // 2-Aug-2018
   public void testClassifyStream() throws Exception {
     Assume.assumeTrue(!useAlias);
 

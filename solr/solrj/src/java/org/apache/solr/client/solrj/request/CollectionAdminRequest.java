@@ -57,7 +57,10 @@ import static org.apache.solr.common.cloud.DocCollection.RULE;
 import static org.apache.solr.common.cloud.DocCollection.SNITCH;
 import static org.apache.solr.common.cloud.ZkStateReader.AUTO_ADD_REPLICAS;
 import static org.apache.solr.common.cloud.ZkStateReader.MAX_SHARDS_PER_NODE;
+import static org.apache.solr.common.cloud.ZkStateReader.NRT_REPLICAS;
+import static org.apache.solr.common.cloud.ZkStateReader.PULL_REPLICAS;
 import static org.apache.solr.common.cloud.ZkStateReader.REPLICATION_FACTOR;
+import static org.apache.solr.common.cloud.ZkStateReader.TLOG_REPLICAS;
 import static org.apache.solr.common.params.CollectionAdminParams.COLL_CONF;
 import static org.apache.solr.common.params.CollectionAdminParams.COLOCATED_WITH;
 import static org.apache.solr.common.params.CollectionAdminParams.COUNT_PROP;
@@ -1150,6 +1153,7 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
     protected String splitKey;
     protected String shard;
     protected String splitMethod;
+    protected Integer numSubShards;
 
     private Properties properties;
 
@@ -1160,6 +1164,15 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
 
     public SplitShard setRanges(String ranges) { this.ranges = ranges; return this; }
     public String getRanges() { return ranges; }
+
+    public Integer getNumSubShards() {
+      return numSubShards;
+    }
+
+    public SplitShard setNumSubShards(Integer numSubShards) {
+      this.numSubShards = numSubShards;
+      return this;
+    }
 
     public SplitShard setSplitMethod(String splitMethod) {
       this.splitMethod = splitMethod;
@@ -1207,6 +1220,8 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
       params.set("split.key", this.splitKey);
       params.set(CoreAdminParams.RANGES, ranges);
       params.set(CommonAdminParams.SPLIT_METHOD, splitMethod);
+      if(numSubShards != null)
+        params.set("numSubShards", numSubShards);
 
       if(properties != null) {
         addProperties(params, properties);
@@ -1648,6 +1663,8 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
     protected String ulogDir;
     protected Properties properties;
     protected Replica.Type type;
+    protected Integer nrtReplicas, tlogReplicas, pullReplicas;
+    protected String createNodeSet;
 
     private AddReplica(String collection, String shard, String routeKey, Replica.Type type) {
       super(CollectionAction.ADDREPLICA);
@@ -1727,6 +1744,42 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
       return shard;
     }
 
+    public Integer getNrtReplicas() {
+      return nrtReplicas;
+    }
+
+    public AddReplica setNrtReplicas(Integer nrtReplicas) {
+      this.nrtReplicas = nrtReplicas;
+      return this;
+    }
+
+    public Integer getTlogReplicas() {
+      return tlogReplicas;
+    }
+
+    public AddReplica setTlogReplicas(Integer tlogReplicas) {
+      this.tlogReplicas = tlogReplicas;
+      return this;
+    }
+
+    public Integer getPullReplicas() {
+      return pullReplicas;
+    }
+
+    public AddReplica setPullReplicas(Integer pullReplicas) {
+      this.pullReplicas = pullReplicas;
+      return this;
+    }
+
+    public String getCreateNodeSet() {
+      return createNodeSet;
+    }
+
+    public AddReplica setCreateNodeSet(String createNodeSet) {
+      this.createNodeSet = createNodeSet;
+      return this;
+    }
+
     @Override
     public SolrParams getParams() {
       ModifiableSolrParams params = new ModifiableSolrParams(super.getParams());
@@ -1758,6 +1811,18 @@ public abstract class CollectionAdminRequest<T extends CollectionAdminResponse> 
       }
       if (properties != null) {
         addProperties(params, properties);
+      }
+      if (nrtReplicas != null)  {
+        params.add(NRT_REPLICAS, String.valueOf(nrtReplicas));
+      }
+      if (tlogReplicas != null)  {
+        params.add(TLOG_REPLICAS, String.valueOf(tlogReplicas));
+      }
+      if (pullReplicas != null)  {
+        params.add(PULL_REPLICAS, String.valueOf(pullReplicas));
+      }
+      if (createNodeSet != null)  {
+        params.add(CREATE_NODE_SET_PARAM, createNodeSet);
       }
       return params;
     }

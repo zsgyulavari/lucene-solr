@@ -1349,7 +1349,7 @@ ant test "-Dtests.class=*.ClassName"
 ant test -Dtestcase=ClassName
 
 # Run all tests in a package and sub-packages
-ant test "-Dtests.class=org.apache.lucene.package.*"
+ant test "-Dtests.class=org.apache.lucene.package.Test*|org.apache.lucene.package.*Test"
 
 # Run any test methods that contain 'esi' (like: ...r*esi*ze...).
 ant test "-Dtests.method=*esi*"
@@ -2296,7 +2296,6 @@ ${ant.project.name}.test.dependencies=${test.classpath.list}
     <attribute name="file"/>
     <sequential>
       <echo>Building checksums for '@{file}'</echo>
-      <checksum file="@{file}" algorithm="sha1" fileext=".sha1" format="MD5SUM" forceoverwrite="yes" readbuffersize="65536"/>
       <checksum file="@{file}" algorithm="SHA-512" fileext=".sha512" format="MD5SUM" forceoverwrite="yes" readbuffersize="65536"/>
     </sequential>
   </macrodef>

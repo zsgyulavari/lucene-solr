@@ -176,7 +176,7 @@ public class TestWithCollection extends SolrCloudTestCase {
   }
 
   @Test
-  @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // added 23-Aug-2018
+  //Commented 14-Oct-2018 @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // added 23-Aug-2018
   public void testDeleteWithCollection() throws IOException, SolrServerException, InterruptedException {
     String prefix = "testDeleteWithCollection";
     String xyz = prefix + "_xyz";
@@ -260,6 +260,8 @@ public class TestWithCollection extends SolrCloudTestCase {
     assertTrue(collection.getReplicas().stream().noneMatch(replica -> withCollection.getReplicas(replica.getNodeName()).isEmpty()));
   }
 
+  @Test
+  @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // added 20-Sep-2018
   public void testAddReplicaWithPolicy() throws Exception {
     String prefix = "testAddReplicaWithPolicy";
     String xyz = prefix + "_xyz";
@@ -349,7 +351,7 @@ public class TestWithCollection extends SolrCloudTestCase {
   }
 
   @Test
-  @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // added 23-Aug-2018
+  //Commented 14-Oct-2018 @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // added 23-Aug-2018
   public void testMoveReplicaWithCollection() throws Exception {
     String prefix = "testMoveReplicaWithCollection";
     String xyz = prefix + "_xyz";

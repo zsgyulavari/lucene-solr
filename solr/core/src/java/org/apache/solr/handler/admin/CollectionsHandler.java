@@ -123,7 +123,6 @@ import static org.apache.solr.common.cloud.DocCollection.RULE;
 import static org.apache.solr.common.cloud.DocCollection.SNITCH;
 import static org.apache.solr.common.cloud.DocCollection.STATE_FORMAT;
 import static org.apache.solr.common.cloud.ZkStateReader.AUTO_ADD_REPLICAS;
-import static org.apache.solr.common.cloud.ZkStateReader.COLLECTION_DEF;
 import static org.apache.solr.common.cloud.ZkStateReader.COLLECTION_PROP;
 import static org.apache.solr.common.cloud.ZkStateReader.MAX_SHARDS_PER_NODE;
 import static org.apache.solr.common.cloud.ZkStateReader.NRT_REPLICAS;
@@ -144,6 +143,7 @@ import static org.apache.solr.common.params.CollectionAdminParams.WITH_COLLECTIO
 import static org.apache.solr.common.params.CollectionParams.CollectionAction.*;
 import static org.apache.solr.common.params.CommonAdminParams.ASYNC;
 import static org.apache.solr.common.params.CommonAdminParams.IN_PLACE_MOVE;
+import static org.apache.solr.common.params.CommonAdminParams.NUM_SUB_SHARDS;
 import static org.apache.solr.common.params.CommonAdminParams.SPLIT_METHOD;
 import static org.apache.solr.common.params.CommonAdminParams.WAIT_FOR_FINAL_STATE;
 import static org.apache.solr.common.params.CommonParams.NAME;
@@ -213,7 +213,7 @@ public class CollectionsHandler extends RequestHandlerBase implements Permission
   protected void copyFromClusterProp(Map<String, Object> props, String prop) throws IOException {
     if (props.get(prop) != null) return;//if it's already specified , return
     Object defVal = new ClusterProperties(coreContainer.getZkController().getZkStateReader().getZkClient())
-        .getClusterProperty(ImmutableList.of(COLLECTION_DEF, prop), null);
+        .getClusterProperty(ImmutableList.of(CollectionAdminParams.DEFAULTS, CollectionAdminParams.COLLECTION, prop), null);
     if (defVal != null) props.put(prop, String.valueOf(defVal));
   }
 
@@ -457,13 +457,6 @@ public class CollectionsHandler extends RequestHandlerBase implements Permission
   }
 
   public enum CollectionOperation implements CollectionOp {
-    /**
-     * very simple currently, you can pass a template collection, and the new collection is created on
-     * every node the template collection is on
-     * there is a lot more to add - you should also be able to create with an explicit server list
-     * we might also want to think about error handling (add the request to a zk queue and involve overseer?)
-     * as well as specific replicas= options
-     */
     CREATE_OP(CREATE, (req, rsp, h) -> {
       Map<String, Object> props = copy(req.getParams().required(), null, NAME);
       props.put("fromApi", "true");
@@ -646,6 +639,7 @@ public class CollectionsHandler extends RequestHandlerBase implements Permission
       String shard = req.getParams().get(SHARD_ID_PROP);
       String rangesStr = req.getParams().get(CoreAdminParams.RANGES);
       String splitKey = req.getParams().get("split.key");
+      String numSubShards = req.getParams().get(NUM_SUB_SHARDS);
 
       if (splitKey == null && shard == null) {
         throw new SolrException(ErrorCode.BAD_REQUEST, "At least one of shard, or split.key should be specified.");
@@ -658,6 +652,10 @@ public class CollectionsHandler extends RequestHandlerBase implements Permission
         throw new SolrException(ErrorCode.BAD_REQUEST,
             "Only one of 'ranges' or 'split.key' should be specified");
       }
+      if (numSubShards != null && (splitKey != null || rangesStr != null)) {
+        throw new SolrException(ErrorCode.BAD_REQUEST,
+            "numSubShards can not be specified with split.key or ranges parameters");
+      }
 
       Map<String, Object> map = copy(req.getParams(), null,
           COLLECTION_PROP,
@@ -666,7 +664,8 @@ public class CollectionsHandler extends RequestHandlerBase implements Permission
           CoreAdminParams.RANGES,
           WAIT_FOR_FINAL_STATE,
           TIMING,
-          SPLIT_METHOD);
+          SPLIT_METHOD,
+          NUM_SUB_SHARDS);
       return copyPropertiesWithPrefix(req.getParams(), map, COLL_PROP_PREFIX);
     }),
     DELETESHARD_OP(DELETESHARD, (req, rsp, h) -> {
@@ -694,6 +693,9 @@ public class CollectionsHandler extends RequestHandlerBase implements Permission
         throw new SolrException(ErrorCode.BAD_REQUEST, "shards can be added only to 'implicit' collections");
       copy(req.getParams(), map,
           REPLICATION_FACTOR,
+          NRT_REPLICAS,
+          TLOG_REPLICAS,
+          PULL_REPLICAS,
           CREATE_NODE_SET,
           WAIT_FOR_FINAL_STATE);
       return copyPropertiesWithPrefix(req.getParams(), map, COLL_PROP_PREFIX);
@@ -828,7 +830,11 @@ public class CollectionsHandler extends RequestHandlerBase implements Permission
           DATA_DIR,
           ULOG_DIR,
           REPLICA_TYPE,
-          WAIT_FOR_FINAL_STATE);
+          WAIT_FOR_FINAL_STATE,
+          NRT_REPLICAS,
+          TLOG_REPLICAS,
+          PULL_REPLICAS,
+          CREATE_NODE_SET);
       return copyPropertiesWithPrefix(req.getParams(), props, COLL_PROP_PREFIX);
     }),
     OVERSEERSTATUS_OP(OVERSEERSTATUS, (req, rsp, h) -> (Map) new LinkedHashMap<>()),
@@ -1192,15 +1198,6 @@ public class CollectionsHandler extends RequestHandlerBase implements Permission
       if (leader != null && leader.getState() == State.ACTIVE) {
         throw new SolrException(ErrorCode.SERVER_ERROR,
             "The shard already has an active leader. Force leader is not applicable. State: " + slice);
-      }
-
-      // Clear out any LIR state
-      String lirPath = handler.coreContainer.getZkController().getLeaderInitiatedRecoveryZnodePath(collectionName, sliceId);
-      if (handler.coreContainer.getZkController().getZkClient().exists(lirPath, true)) {
-        StringBuilder sb = new StringBuilder();
-        handler.coreContainer.getZkController().getZkClient().printLayout(lirPath, 4, sb);
-        log.info("Cleaning out LIR data, which was: {}", sb);
-        handler.coreContainer.getZkController().getZkClient().clean(lirPath);
       }
 
       final Set<String> liveNodes = clusterState.getLiveNodes();
