@@ -72,6 +72,11 @@ New Features
 
 * SOLR-12593: The default configSet now includes an "ignored_*" dynamic field.  (David Smiley)
 
+Bug Fixes
+----------------------
+
+* SOLR-13041: SolrJ autoscaling Condition class has equals but no hashCode. (Zsolt Gyulavari)
+
 Improvements
 ----------------------
 
