@@ -24,10 +24,30 @@
 
   <!-- Any path (name) registered in solrconfig.xml will be sent to that filter -->
   <filter>
+    <filter-name>RecursiveRequestBlockingFilter</filter-name>
+    <filter-class>org.apache.solr.servlet.RecursiveRequestBlockingFilter</filter-class>
+    <!--
+    Exclude patterns is a list of directories that would be short circuited by the
+    SolrDispatchFilter. It includes all Admin UI related static content.
+    NOTE: It is NOT a pattern but only matches the start of the HTTP ServletPath.
+    -->
+    <init-param>
+      <param-name>excludePatterns</param-name>
+      <param-value>/partials/.+,/libs/.+,/css/.+,/js/.+,/img/.+,/templates/.+</param-value>
+    </init-param>
+  </filter>
+
+  <filter-mapping>
+    <filter-name>RecursiveRequestBlockingFilter</filter-name>
+    <url-pattern>/*</url-pattern>
+  </filter-mapping>
+
+  <!-- Any path (name) registered in solrconfig.xml will be sent to that filter -->
+  <filter>
     <filter-name>SolrRequestFilter</filter-name>
     <filter-class>org.apache.solr.servlet.SolrDispatchFilter</filter-class>
     <!--
-    Exclude patterns is a list of directories that would be short circuited by the 
+    Exclude patterns is a list of directories that would be short circuited by the
     SolrDispatchFilter. It includes all Admin UI related static content.
     NOTE: It is NOT a pattern but only matches the start of the HTTP ServletPath.
     -->
@@ -65,7 +85,7 @@
     <servlet-name>SolrRestApi</servlet-name>
     <url-pattern>/schema/*</url-pattern>
   </servlet-mapping>
-  
+
   <mime-mapping>
     <extension>.xsl</extension>
     <!-- per http://www.w3.org/TR/2006/PR-xslt20-20061121/ -->
@@ -110,5 +130,5 @@
     <servlet-name>RedirectOldZookeeper</servlet-name>
     <url-pattern>/zookeeper</url-pattern>
   </servlet-mapping>
--->  
+-->
 </web-app>

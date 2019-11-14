@@ -53,6 +53,7 @@ import org.apache.solr.common.util.ExecutorUtil;
 import org.apache.solr.common.util.SolrjNamedThreadFactory;
 import org.apache.solr.common.util.TimeSource;
 import org.apache.solr.core.CoreContainer;
+import org.apache.solr.servlet.RecursiveRequestBlockingFilter;
 import org.apache.solr.servlet.SolrDispatchFilter;
 import org.apache.solr.util.TimeOut;
 import org.eclipse.jetty.alpn.server.ALPNServerConnectionFactory;
@@ -378,6 +379,12 @@ public class JettySolrRunner {
         for (Map.Entry<ServletHolder, String> entry : config.extraServlets.entrySet()) {
           root.addServlet(entry.getKey(), entry.getValue());
         }
+
+        FilterHolder recursiveRequestBlockingFilter = root.getServletHandler().newFilterHolder(Source.EMBEDDED);
+        recursiveRequestBlockingFilter.setHeldClass(RecursiveRequestBlockingFilter.class);
+        recursiveRequestBlockingFilter.setInitParameter("excludePatterns", excludePatterns);
+        root.addFilter(recursiveRequestBlockingFilter, "*", EnumSet.of(DispatcherType.REQUEST));
+
         dispatchFilter = root.getServletHandler().newFilterHolder(Source.EMBEDDED);
         dispatchFilter.setHeldClass(SolrDispatchFilter.class);
         dispatchFilter.setInitParameter("excludePatterns", excludePatterns);
